@@ -1,0 +1,115 @@
+# SipilXCAD: ukur ukuran hasil build web (trunk) untuk keputusan deploy ke
+# Cloudflare Pages (batas 25 MiB per file). Hanya mengukur: tidak ada deploy,
+# rilis, artifact, atau secret. Hasil ada di:
+#   - ringkasan job (tab Summary pada run), dan
+#   - anotasi "notice"/"warning" pada check run (terbaca juga lewat API publik).
+#
+# Berjalan manual (workflow_dispatch) dan otomatis hanya saat berkas ini sendiri
+# diubah, supaya pertama kali di-push langsung terukur.
+name: WASM size
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/wasm-size.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build.rs mengukur jarak dari tag rilis; clone dangkal memberi label +g<hash>.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Read wasm-bindgen version
+        id: wasm-bindgen-version
+        shell: bash
+        run: |
+          VERSION=$(sed -n '/name = "wasm-bindgen"/{n;s/version = "\(.*\)"/\1/p;q;}' Cargo.lock)
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install wasm-bindgen CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wasm-bindgen-version.outputs.version }}
+
+      - name: Install brotli
+        run: sudo apt-get install -y --no-install-recommends brotli
+
+      # Perintah yang sama dengan pages.yml upstream; hanya --public-url dan --dist yang berbeda.
+      - name: Build web bundle
+        run: trunk build --locked --release --public-url /sipilxcad/ --dist dist/sipilxcad --html-output index.html web-app.html
+
+      - name: Measure
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIMIT=$((25 * 1024 * 1024))   # batas per file Cloudflare Pages
+          NEAR=$((20 * 1024 * 1024))    # peringatan dini
+          mib() { awk -v b="$1" 'BEGIN { printf "%.2f", b / 1048576 }'; }
+
+          FILES=$(find dist/sipilxcad -type f | wc -l)
+          TOTAL=$(find dist/sipilxcad -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+
+          {
+            echo "## Ukuran build web SipilXCAD (\`trunk build --release\`)"
+            echo
+            echo "Total: **$(mib "$TOTAL") MiB** dalam **$FILES** berkas. Batas Cloudflare Pages: 25 MiB per berkas."
+            echo
+            echo "### .wasm dan .js"
+            echo
+            echo "| Berkas | Asli (MiB) | gzip -9 (MiB) | brotli -q11 (MiB) |"
+            echo "|---|---:|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS= read -r f; do
+            raw=$(stat -c %s "$f")
+            gz=$(gzip -9 -c "$f" | wc -c)
+            br=$(brotli -q 11 -c "$f" | wc -c)
+            echo "| \`${f#dist/sipilxcad/}\` | $(mib "$raw") | $(mib "$gz") | $(mib "$br") |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Ukuran ${f#dist/sipilxcad/}::asli=$(mib "$raw") MiB, gzip=$(mib "$gz") MiB, brotli=$(mib "$br") MiB"
+          done < <(find dist/sipilxcad -type f \( -name '*.wasm' -o -name '*.js' \) | sort)
+
+          {
+            echo
+            echo "### 15 berkas terbesar (semua jenis)"
+            echo
+            echo "| Berkas | Ukuran (MiB) |"
+            echo "|---|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          find dist/sipilxcad -type f -printf '%s %P\n' | sort -rn | head -15 | while read -r size path; do
+            echo "| \`$path\` | $(mib "$size") |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          BIGGEST=$(find dist/sipilxcad -type f -printf '%s %P\n' | sort -rn | head -1)
+          echo "::notice title=Ringkasan::total=$(mib "$TOTAL") MiB, berkas=$FILES, terbesar=${BIGGEST#* } ($(mib "${BIGGEST%% *}") MiB)"
+
+          # Hanya melaporkan; job tidak digagalkan supaya angka tetap terbaca.
+          find dist/sipilxcad -type f -printf '%s %P\n' | while read -r size path; do
+            if [ "$size" -gt "$LIMIT" ]; then
+              echo "::warning title=Melebihi 25 MiB::$path = $(mib "$size") MiB"
+            elif [ "$size" -gt "$NEAR" ]; then
+              echo "::warning title=Mendekati 25 MiB::$path = $(mib "$size") MiB"
+            fi
+          done
