@@ -9,6 +9,8 @@ permissions:
 
 jobs:
   supporter-priority-note:
+    # SipilXCAD: komentar ini mengarahkan ke Patreon upstream, jadi hanya jalan di repo asli.
+    if: github.repository == 'HakanSeven12/OpenCADStudio'
     runs-on: ubuntu-latest
     steps:
       - name: Post supporter priority note

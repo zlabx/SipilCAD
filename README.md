@@ -21,7 +21,7 @@ SipilXCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://gith
 ## Status
 
 - Basis saat ini: **Open CAD Studio 2026.39.0**, upstream commit [`07f25f4b`](https://github.com/HakanSeven12/OpenCADStudio/commit/07f25f4b) (29 Sep 2026).
-- Perubahan baru sebatas **menonaktifkan workflow GitHub Actions upstream** yang akan berjalan otomatis di repo ini; lihat [Perubahan dari upstream](#perubahan-dari-upstream). Kode aplikasi, branding, dan antarmuka **belum diubah**.
+- Perubahan baru sebatas **menonaktifkan dua workflow GitHub Actions upstream** yang akan berjalan otomatis di repo ini; lihat [Perubahan dari upstream](#perubahan-dari-upstream). Kode aplikasi, branding, dan antarmuka **belum diubah**.
 - **Belum dibuild dan belum dideploy** dari repo ini. Perintah build di bawah diambil dari dokumentasi dan workflow upstream, belum dijalankan di sini. Baca [Checklist sebelum deploy](#checklist-sebelum-deploy) dulu.
 - SipilXCAD saat ini produk terpisah dari SipilCAD. Nanti repo ini akan di-rename dan menggantikan SipilCAD di SipilStock.
 
@@ -116,13 +116,17 @@ Catat setiap perubahan di sini agar mudah ditinjau saat merge.
 
 | File | Perubahan | Alasan |
 |---|---|---|
+| `.github/workflows/weekly-release.yml` | Pemicu `schedule` (cron Minggu 12:00 UTC) di-comment; `workflow_dispatch` manual tetap ada | Di repo ini jadwal itu akan mempublikasikan rilis setiap minggu dan memicu build Windows/Linux/macOS serta Pages, dengan secret dan identitas upstream yang tidak kita punya |
+| `.github/workflows/issue-welcome.yml` | Job diberi `if: github.repository == 'HakanSeven12/OpenCADStudio'` | Komentar otomatisnya mengarahkan pengguna ke Patreon upstream dan seolah ditulis pemilik repo |
 | `README.md` | Diganti | Atribusi dan panduan SipilXCAD |
+
+Workflow `ci.yml` dan `web-check.yml` sengaja dibiarkan: keduanya berjalan pada push ke `main` dan pull request, tidak memakai secret, dan berguna sebagai pemeriksaan build. Hasilnya belum pernah dilihat di repo ini.
 
 ## Checklist sebelum deploy
 
 Hasil audit awal (membaca kode dan workflow upstream; belum ada build). Yang sudah dikerjakan ditandai centang.
 
-- [ ] **Workflow otomatis upstream** (rilis mingguan terjadwal, komentar otomatis di issue): dinonaktifkan lewat commit terpisah; lihat tabel di atas.
+- [x] **Workflow otomatis upstream** (rilis mingguan terjadwal, komentar otomatis di issue) dinonaktifkan; lihat tabel di atas.
 - [ ] **Build web belum pernah dijalankan.** Pastikan `trunk build` sukses dan ukur ukuran hasilnya. Cloudflare Pages membatasi ukuran per file (25 MiB); bila `.wasm` melewatinya, pertimbangkan `wasm-opt` atau menaruh berkas itu di tempat lain (mis. R2).
 - [ ] **Toolchain build.** Pastikan Rust, `trunk`, dan `wasm-bindgen-cli` tersedia di lingkungan build Cloudflare Pages. Bila tidak, build di GitHub Actions dan publikasikan hasilnya.
 - [ ] **Header cross-origin isolation.** `Trunk.toml` menyebut header `Cross-Origin-Opener-Policy: same-origin` dan `Cross-Origin-Embedder-Policy: require-corp` agar WASM bisa multi-thread; tanpanya aplikasi tetap jalan satu thread. Di Cloudflare Pages bisa lewat `_headers`. `require-corp` memblokir sumber lintas-origin tanpa header CORP, jadi uji thumbnail dan pemuatan lain setelah diaktifkan. Halaman juga sebaiknya dibuka langsung, bukan di-embed lewat iframe.
