@@ -1,8 +1,8 @@
-# SipilXCAD
+# SipilCAD
 
 **Gambar teknik 2D dan pemodelan 3D dengan format DWG/DXF native, untuk desktop dan web** — bagian dari ekosistem [SipilStock](https://sipilstock.com).
 
-SipilXCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio)** karya **HakanSeven12**, dan dirilis di bawah lisensi yang sama, **GPL-3.0**.
+SipilCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio)** karya **HakanSeven12**, dan dirilis di bawah lisensi yang sama, **GPL-3.0**.
 
 > ## Atribusi
 >
@@ -14,7 +14,7 @@ SipilXCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://gith
 > | Lisensi | GPL-3.0 (lihat [`LICENSE`](LICENSE)) |
 >
 > Seluruh riwayat commit Open CAD Studio dipertahankan di repo ini. Semua kredit atas editor, kernel, dan antarmuka dasar
-> menjadi milik penulis asli. Perubahan khusus SipilXCAD dicatat di bagian [Perubahan dari upstream](#perubahan-dari-upstream).
+> menjadi milik penulis asli. Perubahan khusus SipilCAD dicatat di bagian [Perubahan dari upstream](#perubahan-dari-upstream).
 
 ---
 
@@ -23,7 +23,7 @@ SipilXCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://gith
 - Basis saat ini: **Open CAD Studio 2026.39.0**, upstream commit [`07f25f4b`](https://github.com/HakanSeven12/OpenCADStudio/commit/07f25f4b) (29 Sep 2026).
 - Perubahan baru sebatas **menonaktifkan dua workflow GitHub Actions upstream** yang akan berjalan otomatis di repo ini; lihat [Perubahan dari upstream](#perubahan-dari-upstream). Kode aplikasi, branding, dan antarmuka **belum diubah**.
 - **Belum dideploy.** Di CI, `cargo test` dan `cargo check` wasm lolos (commit `a0c2f8a2`), dan `trunk build --release` sukses (workflow `wasm-size.yml`, commit `0bb4b469`), tetapi hasilnya belum diuji di browser. **Berkas `.wasm` utama 53,14 MiB, melebihi batas 25 MiB per berkas Cloudflare Pages.** Baca [Checklist sebelum deploy](#checklist-sebelum-deploy) dulu.
-- SipilXCAD saat ini produk terpisah dari SipilCAD. Nanti repo ini akan di-rename dan menggantikan SipilCAD di SipilStock.
+- Repo ini dulunya bernama **SipilXCAD** dan sudah di-rename menjadi **SipilCAD**; riwayat commit tetap utuh. Repo ini menggantikan SipilCAD lama (viewer berbasis JavaScript), yang kini diarsipkan di luar repo ini. Folder `/sipilcad/` di SipilStock sudah dikosongkan dan menunggu aplikasi ini.
 
 ## Fitur (dari Open CAD Studio)
 
@@ -50,8 +50,8 @@ sudo apt install libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev \
 Desktop:
 
 ```bash
-git clone https://github.com/zlabx/SipilXCAD.git
-cd SipilXCAD
+git clone https://github.com/zlabx/SipilCAD.git
+cd SipilCAD
 cargo build --release --bin OpenCADStudio   # hasil: target/release/OpenCADStudio
 ```
 
@@ -68,7 +68,7 @@ trunk serve                            # dev server, path /app/ (lihat Trunk.tom
 Build web produksi mengikuti `.github/workflows/pages.yml` upstream, dengan `--public-url` diganti ke subfolder tujuan:
 
 ```bash
-trunk build --locked --release --public-url /sipilxcad/ --dist dist/sipilxcad --html-output index.html web-app.html
+trunk build --locked --release --public-url /sipilcad/ --dist dist/sipilcad --html-output index.html web-app.html
 ```
 
 Catatan dari file upstream:
@@ -82,7 +82,7 @@ Catatan dari file upstream:
 | Branch | Fungsi |
 |---|---|
 | `upstream` | **Cermin murni** `HakanSeven12/OpenCADStudio` (`main`). Jangan commit apa pun di sini. |
-| `main` | Versi SipilXCAD. Ini yang dipakai untuk build/deploy. |
+| `main` | Versi SipilCAD. Ini yang dipakai untuk build/deploy. |
 
 Remote `upstream` menunjuk ke repo Open CAD Studio. Cara mengambil update:
 
@@ -98,7 +98,7 @@ git checkout main
 git merge upstream                    # tinjau hasilnya, jalankan cargo test, lalu push
 ```
 
-Kalau `README.md` konflik saat merge (upstream ikut mengubahnya), pertahankan versi SipilXCAD:
+Kalau `README.md` konflik saat merge (upstream ikut mengubahnya), pertahankan versi SipilCAD:
 `git checkout --ours README.md && git add README.md`.
 
 ### Aturan supaya update tetap murah
@@ -118,8 +118,8 @@ Catat setiap perubahan di sini agar mudah ditinjau saat merge.
 |---|---|---|
 | `.github/workflows/weekly-release.yml` | Pemicu `schedule` (cron Minggu 12:00 UTC) di-comment; `workflow_dispatch` manual tetap ada | Di repo ini jadwal itu akan mempublikasikan rilis setiap minggu dan memicu build Windows/Linux/macOS serta Pages, dengan secret dan identitas upstream yang tidak kita punya |
 | `.github/workflows/issue-welcome.yml` | Job diberi `if: github.repository == 'HakanSeven12/OpenCADStudio'` | Komentar otomatisnya mengarahkan pengguna ke Patreon upstream dan seolah ditulis pemilik repo |
-| `.github/workflows/wasm-size.yml` (baru) | Workflow ukur saja: `trunk build --release` lalu melaporkan ukuran berkas (asli, gzip, brotli) di ringkasan job dan anotasi. Tidak ada deploy, rilis, artifact, atau secret | Menentukan apakah hasil build web muat di batas 25 MiB per berkas Cloudflare Pages |
-| `README.md` | Diganti | Atribusi dan panduan SipilXCAD |
+| `.github/workflows/wasm-size.yml` (baru) | Workflow ukur saja: `trunk build --release` lalu melaporkan ukuran berkas (asli, gzip, brotli) dan baris pemuat wasm/js di `index.html` (untuk merancang hosting R2) di ringkasan job dan anotasi. Tidak ada deploy, rilis, artifact, atau secret | Menentukan apakah hasil build web muat di batas 25 MiB per berkas Cloudflare Pages |
+| `README.md` | Diganti | Atribusi dan panduan SipilCAD |
 
 Workflow `ci.yml` dan `web-check.yml` sengaja dibiarkan: keduanya berjalan pada push ke `main` dan pull request, tidak memakai secret, dan berguna sebagai pemeriksaan build. Hasilnya belum pernah dilihat di repo ini.
 
@@ -136,14 +136,14 @@ Hasil audit awal (membaca kode dan workflow upstream; belum ada build). Yang sud
 - [ ] **Branding dan tautan.** Judul halaman (`web-app.html`), logo, nama `OpenCADStudio` di ratusan berkas, serta tautan Patreon, open-aec.com, dan Reddit milik upstream di antarmuka. `site/CNAME` berisi `www.opencadstudio.com`; jangan dipakai. Tetap sertakan atribusi.
 - [ ] **Halaman "Tentang/Lisensi"** di dalam aplikasi: sebut Open CAD Studio oleh HakanSeven12, lisensi GPL-3.0, dan tautan ke repo ini.
 - [ ] **Dependensi git eksternal.** `Cargo.toml` mengambil `iced`, fork `iced_aw` (branch `agent/fix-iced-fonts`), dan tiga crate upstream langsung dari GitHub. Bila repo atau branch itu hilang atau di-force-push, build rusak. Pertimbangkan mirror ke akun zlabx atau `cargo vendor`.
-- [ ] **`release.yml` dan `pages.yml` upstream** memakai secret milik upstream (Patreon, penandatanganan Windows/Azure, Snapcraft) dan repo/nama paket upstream. Jangan diaktifkan sebelum diadaptasi ke SipilXCAD.
+- [ ] **`release.yml` dan `pages.yml` upstream** memakai secret milik upstream (Patreon, penandatanganan Windows/Azure, Snapcraft) dan repo/nama paket upstream. Jangan diaktifkan sebelum diadaptasi ke SipilCAD.
 - [ ] **`.github/FUNDING.yml`** masih menunjuk ke sponsor upstream. Sengaja dibiarkan agar dukungan mengalir ke penulis asli; ganti bila tidak diinginkan.
 - [ ] **Bahasa Indonesia** (opsional): tambahkan locale baru dan kirim juga ke upstream.
 
 ## Integrasi dengan SipilStock
 
-Saat ini SipilXCAD berdiri sebagai produk terpisah. Rencananya repo ini akan di-rename dan menggantikan SipilCAD (`/sipilcad/`) di repo utama [`zlabx/zlabx`](https://github.com/zlabx/zlabx) (privat). Cara publikasinya (clone dan build saat deploy Cloudflare Pages, atau build di GitHub Actions) belum diputuskan; lihat checklist di atas. Karena repo ini publik, tidak diperlukan token untuk clone.
+Repo ini (dulu SipilXCAD) sudah menggantikan SipilCAD lama di repo utama [`zlabx/zlabx`](https://github.com/zlabx/zlabx) (privat): folder `sipilcad/` dan skrip build lama sudah dihapus dari sana, sedangkan kartu SipilCAD di halaman utama, halaman Apps, dan dropdown Apps dipertahankan dan menunggu tautan `/sipilcad/` diisi. Cara publikasinya (build di GitHub Actions dan `.wasm` di R2, atau cara lain) belum diputuskan; lihat checklist di atas. Karena repo ini publik, tidak diperlukan token untuk clone.
 
 ## Lisensi
 
-[GNU General Public License v3.0](LICENSE). Copyright pada kode Open CAD Studio dimiliki penulis aslinya; modifikasi SipilXCAD dirilis di bawah lisensi yang sama. Kode sumber lengkap tersedia di repo ini untuk siapa pun yang menggunakan SipilXCAD. Crate `opencadkernel`, `opencadcodec`, dan `opencadgraph` yang dipakai sebagai dependensi berlisensi MPL-2.0 di repo masing-masing.
+[GNU General Public License v3.0](LICENSE). Copyright pada kode Open CAD Studio dimiliki penulis aslinya; modifikasi SipilCAD dirilis di bawah lisensi yang sama. Kode sumber lengkap tersedia di repo ini untuk siapa pun yang menggunakan SipilCAD. Crate `opencadkernel`, `opencadcodec`, dan `opencadgraph` yang dipakai sebagai dependensi berlisensi MPL-2.0 di repo masing-masing.
