@@ -1,4 +1,4 @@
-# SipilXCAD: ukur ukuran hasil build web (trunk) untuk keputusan deploy ke
+# SipilCAD: ukur ukuran hasil build web (trunk) untuk keputusan deploy ke
 # Cloudflare Pages (batas 25 MiB per file). Hanya mengukur: tidak ada deploy,
 # rilis, artifact, atau secret. Hasil ada di:
 #   - ringkasan job (tab Summary pada run), dan
@@ -59,7 +59,7 @@ jobs:
 
       # Perintah yang sama dengan pages.yml upstream; hanya --public-url dan --dist yang berbeda.
       - name: Build web bundle
-        run: trunk build --locked --release --public-url /sipilxcad/ --dist dist/sipilxcad --html-output index.html web-app.html
+        run: trunk build --locked --release --public-url /sipilcad/ --dist dist/sipilcad --html-output index.html web-app.html
 
       - name: Measure
         shell: bash
@@ -69,11 +69,11 @@ jobs:
           NEAR=$((20 * 1024 * 1024))    # peringatan dini
           mib() { awk -v b="$1" 'BEGIN { printf "%.2f", b / 1048576 }'; }
 
-          FILES=$(find dist/sipilxcad -type f | wc -l)
-          TOTAL=$(find dist/sipilxcad -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+          FILES=$(find dist/sipilcad -type f | wc -l)
+          TOTAL=$(find dist/sipilcad -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
 
           {
-            echo "## Ukuran build web SipilXCAD (\`trunk build --release\`)"
+            echo "## Ukuran build web SipilCAD (\`trunk build --release\`)"
             echo
             echo "Total: **$(mib "$TOTAL") MiB** dalam **$FILES** berkas. Batas Cloudflare Pages: 25 MiB per berkas."
             echo
@@ -87,9 +87,9 @@ jobs:
             raw=$(stat -c %s "$f")
             gz=$(gzip -9 -c "$f" | wc -c)
             br=$(brotli -q 11 -c "$f" | wc -c)
-            echo "| \`${f#dist/sipilxcad/}\` | $(mib "$raw") | $(mib "$gz") | $(mib "$br") |" >> "$GITHUB_STEP_SUMMARY"
-            echo "::notice title=Ukuran ${f#dist/sipilxcad/}::asli=$(mib "$raw") MiB, gzip=$(mib "$gz") MiB, brotli=$(mib "$br") MiB"
-          done < <(find dist/sipilxcad -type f \( -name '*.wasm' -o -name '*.js' \) | sort)
+            echo "| \`${f#dist/sipilcad/}\` | $(mib "$raw") | $(mib "$gz") | $(mib "$br") |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Ukuran ${f#dist/sipilcad/}::asli=$(mib "$raw") MiB, gzip=$(mib "$gz") MiB, brotli=$(mib "$br") MiB"
+          done < <(find dist/sipilcad -type f \( -name '*.wasm' -o -name '*.js' \) | sort)
 
           {
             echo
@@ -98,18 +98,40 @@ jobs:
             echo "| Berkas | Ukuran (MiB) |"
             echo "|---|---:|"
           } >> "$GITHUB_STEP_SUMMARY"
-          find dist/sipilxcad -type f -printf '%s %P\n' | sort -rn | head -15 | while read -r size path; do
+          find dist/sipilcad -type f -printf '%s %P\n' | sort -rn | head -15 | while read -r size path; do
             echo "| \`$path\` | $(mib "$size") |" >> "$GITHUB_STEP_SUMMARY"
           done
 
-          BIGGEST=$(find dist/sipilxcad -type f -printf '%s %P\n' | sort -rn | head -1)
+          BIGGEST=$(find dist/sipilcad -type f -printf '%s %P\n' | sort -rn | head -1)
           echo "::notice title=Ringkasan::total=$(mib "$TOTAL") MiB, berkas=$FILES, terbesar=${BIGGEST#* } ($(mib "${BIGGEST%% *}") MiB)"
 
           # Hanya melaporkan; job tidak digagalkan supaya angka tetap terbaca.
-          find dist/sipilxcad -type f -printf '%s %P\n' | while read -r size path; do
+          find dist/sipilcad -type f -printf '%s %P\n' | while read -r size path; do
             if [ "$size" -gt "$LIMIT" ]; then
               echo "::warning title=Melebihi 25 MiB::$path = $(mib "$size") MiB"
             elif [ "$size" -gt "$NEAR" ]; then
               echo "::warning title=Mendekati 25 MiB::$path = $(mib "$size") MiB"
             fi
           done
+
+      # Hanya membaca hasil build: mencetak baris index.html yang memuat wasm/js,
+      # supaya terlihat bagaimana pemuat merujuk berkas (dasar rencana hosting R2).
+      - name: Inspect loader (index.html)
+        shell: bash
+        run: |
+          set -eu
+          IDX=dist/sipilcad/index.html
+          test -f "$IDX"
+          {
+            echo
+            echo "### index.html: baris pemuat wasm/js"
+            echo
+            echo "Ukuran index.html: $(stat -c %s "$IDX") byte"
+            echo
+            echo '```html'
+            grep -n -i -E 'wasm|\.js|init|<link|<script|import ' "$IDX" | cut -c1-400 | head -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -n -i -E 'wasm|init\(|import ' "$IDX" | cut -c1-380 | head -25 | while IFS= read -r line; do
+            echo "::notice title=index.html::${line}"
+          done || true
