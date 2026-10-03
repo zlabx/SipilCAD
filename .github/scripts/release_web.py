@@ -20,6 +20,8 @@ from pathlib import Path
 LIMIT = 25 * 1024 * 1024  # batas per berkas Cloudflare Pages
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 MiB = 1024 * 1024
+# Cloudflare memblokir (403) UA bawaan Python-urllib; UA ini terbukti lolos (probe di CI).
+USER_AGENT = "release-check/1.0 (+https://github.com/zlabx)"
 
 
 def mib(n):
@@ -233,7 +235,7 @@ def cmd_cleanup(a):
 
 # ----------------------------------------------------------------------------- verify-remote
 def _request(url, method, headers):
-    req = urllib.request.Request(url, method=method, headers=headers)
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT, **headers})
     return urllib.request.urlopen(req, timeout=180)
 
 
