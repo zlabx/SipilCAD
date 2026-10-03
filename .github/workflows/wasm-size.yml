@@ -1,6 +1,7 @@
 # SipilCAD: ukur ukuran hasil build web (trunk) untuk keputusan deploy ke
 # Cloudflare Pages (batas 25 MiB per file). Hanya mengukur: tidak ada deploy,
-# rilis, artifact, atau secret. Hasil ada di:
+# rilis, atau secret. Hasil build diunggah sebagai artifact (retensi 1 hari)
+# hanya untuk uji lokal di browser (Tahap 1). Hasil ukur ada di:
 #   - ringkasan job (tab Summary pada run), dan
 #   - anotasi "notice"/"warning" pada check run (terbaca juga lewat API publik).
 #
@@ -60,6 +61,15 @@ jobs:
       # Perintah yang sama dengan pages.yml upstream; hanya --public-url dan --dist yang berbeda.
       - name: Build web bundle
         run: trunk build --locked --release --public-url /sipilcad/ --dist dist/sipilcad --html-output index.html web-app.html
+
+      # Untuk uji lokal di browser: isi artifact = isi dist/sipilcad (index.html di akar zip).
+      - name: Upload build as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sipilcad-web-dist
+          path: dist/sipilcad
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Measure
         shell: bash

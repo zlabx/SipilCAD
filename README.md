@@ -118,7 +118,7 @@ Catat setiap perubahan di sini agar mudah ditinjau saat merge.
 |---|---|---|
 | `.github/workflows/weekly-release.yml` | Pemicu `schedule` (cron Minggu 12:00 UTC) di-comment; `workflow_dispatch` manual tetap ada | Di repo ini jadwal itu akan mempublikasikan rilis setiap minggu dan memicu build Windows/Linux/macOS serta Pages, dengan secret dan identitas upstream yang tidak kita punya |
 | `.github/workflows/issue-welcome.yml` | Job diberi `if: github.repository == 'HakanSeven12/OpenCADStudio'` | Komentar otomatisnya mengarahkan pengguna ke Patreon upstream dan seolah ditulis pemilik repo |
-| `.github/workflows/wasm-size.yml` (baru) | Workflow ukur saja: `trunk build --release` lalu melaporkan ukuran berkas (asli, gzip, brotli) dan baris pemuat wasm/js di `index.html` (untuk merancang hosting R2) di ringkasan job dan anotasi. Tidak ada deploy, rilis, artifact, atau secret | Menentukan apakah hasil build web muat di batas 25 MiB per berkas Cloudflare Pages |
+| `.github/workflows/wasm-size.yml` (baru) | Workflow ukur saja: `trunk build --release` lalu melaporkan ukuran berkas (asli, gzip, brotli) dan baris pemuat wasm/js di `index.html` (untuk merancang hosting R2) di ringkasan job dan anotasi, lalu mengunggah hasil build sebagai artifact (retensi 1 hari) untuk uji lokal di browser. Tidak ada deploy, rilis, atau secret | Menentukan apakah hasil build web muat di batas 25 MiB per berkas Cloudflare Pages |
 | `README.md` | Diganti | Atribusi dan panduan SipilCAD |
 
 Workflow `ci.yml` dan `web-check.yml` sengaja dibiarkan: keduanya berjalan pada push ke `main` dan pull request, tidak memakai secret, dan berguna sebagai pemeriksaan build. Hasilnya belum pernah dilihat di repo ini.
