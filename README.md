@@ -119,9 +119,19 @@ Catat setiap perubahan di sini agar mudah ditinjau saat merge.
 | `.github/workflows/weekly-release.yml` | Pemicu `schedule` (cron Minggu 12:00 UTC) di-comment; `workflow_dispatch` manual tetap ada | Di repo ini jadwal itu akan mempublikasikan rilis setiap minggu dan memicu build Windows/Linux/macOS serta Pages, dengan secret dan identitas upstream yang tidak kita punya |
 | `.github/workflows/issue-welcome.yml` | Job diberi `if: github.repository == 'HakanSeven12/OpenCADStudio'` | Komentar otomatisnya mengarahkan pengguna ke Patreon upstream dan seolah ditulis pemilik repo |
 | `.github/workflows/wasm-size.yml` (baru) | Workflow ukur saja: `trunk build --release` lalu melaporkan ukuran berkas (asli, gzip, brotli) dan baris pemuat wasm/js di `index.html` (untuk merancang hosting R2) di ringkasan job dan anotasi, lalu mengunggah hasil build sebagai artifact (retensi 1 hari) untuk uji lokal di browser. Tidak ada deploy, rilis, atau secret | Menentukan apakah hasil build web muat di batas 25 MiB per berkas Cloudflare Pages |
+| `.github/workflows/release-web.yml` (baru) | Build web, unggah `.wasm` utama ke R2, ganti URL-nya di `index.html`, paketkan sisanya, dan terbitkan GitHub Release. Mode rilis (tag `web-v*`) dan dry-run | `.wasm` melebihi batas 25 MiB Cloudflare Pages dan build Rust terlalu lama untuk batas build Pages; jadi dibangun dan dirilis di sini, lalu SipilStock hanya mengunduh paketnya |
+| `.github/scripts/release_web.py` (baru) | Logika rilis: patch `index.html`, unggah ke R2, verifikasi dari URL publik, paket, dan pembersihan versi lama | Dipanggil oleh `release-web.yml`; hanya memproses hasil build |
 | `README.md` | Diganti | Atribusi dan panduan SipilCAD |
 
 Workflow `ci.yml` dan `web-check.yml` sengaja dibiarkan: keduanya berjalan pada push ke `main` dan pull request, tidak memakai secret, dan berguna sebagai pemeriksaan build. Hasilnya belum pernah dilihat di repo ini.
+
+## Rilis build web
+
+Dikerjakan oleh `.github/workflows/release-web.yml`. Prasyarat: bucket R2 publik dengan domain kustom dan CORS `GET`/`HEAD`; secret `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`; variabel `R2_PUBLIC_URL`.
+
+- **Dry-run:** berjalan otomatis saat `release-web.yml` atau `release_web.py` diubah di `main`, atau manual lewat tab Actions. `.wasm` diunggah ke `_dryrun/` di R2 (ditimpa tiap run), diverifikasi dari URL publik, dan paketnya hanya jadi artifact selama 1 hari. Tidak ada GitHub Release.
+- **Rilis:** push tag `web-v*` (mis. `git tag web-v0.1.0 && git push origin web-v0.1.0`). `.wasm` diunggah ke `sipilcad/<tag>/` di R2, `index.html` di paket menunjuk ke sana, GitHub Release dibuat dengan `sipilcad-web-<tag>.tar.gz` dan checksum-nya, lalu R2 menyisakan 3 versi terbaru. Pembersihan memang dilakukan workflow ini, bukan aturan lifecycle berbasis umur, karena aturan itu bisa menghapus `.wasm` yang masih tayang.
+- **Isi paket:** semua hasil `trunk build` kecuali `.wasm` utama, ditambah `LICENSE` dan `SOURCE.txt`. Tidak ada berkas di paket yang melebihi 25 MiB (diperiksa otomatis).
 
 ## Checklist sebelum deploy
 

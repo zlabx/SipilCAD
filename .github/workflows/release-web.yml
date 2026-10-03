@@ -1,0 +1,166 @@
+# SipilCAD: rilis build web untuk SipilStock.
+#
+# Build di GitHub Actions (build Rust terlalu lama untuk batas 20 menit Cloudflare Pages),
+# lalu: .wasm utama (> 25 MiB) diunggah ke R2 dan URL-nya di index.html diganti; sisanya
+# dipaketkan sebagai tar.gz untuk GitHub Release. Skrip build di repo utama hanya mengunduh
+# paket itu. Logika ada di .github/scripts/release_web.py.
+#
+# Dua mode:
+#   - Tag `web-v*`   -> RILIS: wasm ke R2 di sipilcad/<tag>/, GitHub Release dibuat,
+#                       R2 menyisakan 3 versi terbaru.
+#   - Lainnya        -> DRY-RUN (push yang mengubah berkas ini atau skripnya, atau manual):
+#                       wasm ke R2 di _dryrun/ (ditimpa tiap run), TANPA GitHub Release,
+#                       paket hanya jadi artifact (retensi 1 hari).
+#
+# Secret: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET.
+# Variabel: R2_PUBLIC_URL (mis. https://sipilcad-cdn.sipilstock.com).
+name: Release web
+
+on:
+  push:
+    tags:
+      - 'web-v*'
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-web.yml'
+      - '.github/scripts/release_web.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-web
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: write   # membuat GitHub Release (mode rilis)
+    env:
+      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      # Hindari checksum tambahan yang kini jadi bawaan SDK AWS baru, demi kompatibilitas dengan R2.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - name: Determine mode
+        id: mode
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/web-v* ]]; then
+            TAG="$GITHUB_REF_NAME"; RELEASE=true; PREFIX="sipilcad/$TAG"
+          else
+            TAG="dryrun-${GITHUB_SHA::8}"; RELEASE=false; PREFIX="_dryrun"
+          fi
+          { echo "release=$RELEASE"; echo "tag=$TAG"; echo "prefix=$PREFIX"; } >> "$GITHUB_OUTPUT"
+          echo "Mode: release=$RELEASE tag=$TAG prefix=$PREFIX"
+          {
+            echo "## Release web"
+            echo
+            if [ "$RELEASE" = true ]; then echo "Mode: **RILIS** \`$TAG\`"; else echo "Mode: **DRY-RUN** (tanpa GitHub Release; R2 prefix \`$PREFIX\`)"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Gagal cepat (sebelum build ~15 menit) bila konfigurasi R2 belum lengkap.
+      - name: Check configuration
+        shell: bash
+        run: |
+          missing=0
+          for v in R2_PUBLIC_URL R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
+            if [ -z "${!v}" ]; then echo "::error title=Konfigurasi::$v belum diatur di repo"; missing=1; fi
+          done
+          exit $missing
+
+      - uses: actions/checkout@v4
+        with:
+          # build.rs mengukur jarak dari tag rilis; clone dangkal memberi label +g<hash>.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Read wasm-bindgen version
+        id: wasm-bindgen-version
+        shell: bash
+        run: |
+          VERSION=$(sed -n '/name = "wasm-bindgen"/{n;s/version = "\(.*\)"/\1/p;q;}' Cargo.lock)
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install wasm-bindgen CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wasm-bindgen-version.outputs.version }}
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --quiet boto3
+
+      # Perintah yang sama dengan pages.yml upstream; hanya --public-url dan --dist yang berbeda.
+      - name: Build web bundle
+        run: trunk build --locked --release --public-url /sipilcad/ --dist dist/sipilcad --html-output index.html web-app.html
+
+      - name: Patch index.html (URL wasm ke R2)
+        run: python3 .github/scripts/release_web.py patch --public-url "$R2_PUBLIC_URL" --prefix "${{ steps.mode.outputs.prefix }}"
+
+      - name: Upload wasm to R2
+        run: python3 .github/scripts/release_web.py upload --bucket "$R2_BUCKET" --prefix "${{ steps.mode.outputs.prefix }}"
+
+      - name: Verify wasm from public URL
+        run: python3 .github/scripts/release_web.py verify-remote
+
+      - name: Package
+        env:
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          python3 .github/scripts/release_web.py package --tag "$TAG" --commit "$GITHUB_SHA"
+          python3 .github/scripts/release_web.py notes > build/notes.md
+          cat build/notes.md >> "$GITHUB_STEP_SUMMARY"
+          ls -l build/package
+
+      - name: Upload package as artifact (dry-run)
+        if: steps.mode.outputs.release != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sipilcad-web-package
+          path: |
+            build/package/*.tar.gz
+            build/package/*.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.mode.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          PKG="build/package/sipilcad-web-$TAG.tar.gz"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$PKG" "$PKG.sha256" --clobber
+            gh release edit "$TAG" --notes-file build/notes.md
+          else
+            gh release create "$TAG" "$PKG" "$PKG.sha256" --verify-tag --title "SipilCAD web $TAG" --notes-file build/notes.md
+          fi
+
+      # Setelah rilis sukses: sisakan 3 versi terbaru di R2 (HTML lama yang masih ter-cache
+      # di browser bisa merujuk wasm lama). Sengaja bukan aturan lifecycle berbasis umur:
+      # itu bisa menghapus wasm yang masih tayang bila tidak ada rilis baru.
+      - name: Prune old versions in R2
+        if: steps.mode.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: python3 .github/scripts/release_web.py cleanup --bucket "$R2_BUCKET" --keep 3 --current "$TAG"
