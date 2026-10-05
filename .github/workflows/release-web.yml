@@ -9,7 +9,7 @@
 #   - Tag `web-v*`   -> RILIS: wasm ke R2 di sipilcad/<tag>/, GitHub Release dibuat,
 #                       R2 menyisakan 3 versi terbaru.
 #   - Lainnya        -> DRY-RUN (push yang mengubah berkas ini atau skripnya, atau manual):
-#                       wasm ke R2 di _dryrun/ (ditimpa tiap run), TANPA GitHub Release,
+#                       wasm ke R2 di _dryrun/ (dikosongkan dulu tiap run), TANPA GitHub Release,
 #                       paket hanya jadi artifact (retensi 1 hari).
 #
 # Secret: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET.
@@ -77,7 +77,7 @@ jobs:
           done
           exit $missing
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # build.rs mengukur jarak dari tag rilis; clone dangkal memberi label +g<hash>.
           fetch-depth: 0
@@ -116,6 +116,12 @@ jobs:
       - name: Patch index.html (URL wasm ke R2)
         run: python3 .github/scripts/release_web.py patch --public-url "$R2_PUBLIC_URL" --prefix "${{ steps.mode.outputs.prefix }}"
 
+      # Dry-run saja: nama wasm memuat hash yang berbeda tiap build, jadi _dryrun/ dikosongkan dulu
+      # supaya tidak menumpuk. Skrip menolak root selain _dryrun/.
+      - name: Empty _dryrun/ in R2 (dry-run)
+        if: steps.mode.outputs.release != 'true'
+        run: python3 .github/scripts/release_web.py purge --bucket "$R2_BUCKET"
+
       - name: Upload wasm to R2
         run: python3 .github/scripts/release_web.py upload --bucket "$R2_BUCKET" --prefix "${{ steps.mode.outputs.prefix }}"
 
@@ -133,7 +139,7 @@ jobs:
 
       - name: Upload package as artifact (dry-run)
         if: steps.mode.outputs.release != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sipilcad-web-package
           path: |

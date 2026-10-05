@@ -233,6 +233,19 @@ def cmd_cleanup(a):
             s3.delete_objects(Bucket=a.bucket, Delete={"Objects": [{"Key": k} for k in ks[i:i + 1000]]})
 
 
+def cmd_purge(a):
+    """Kosongkan _dryrun/ (nama wasm memuat hash yang beda tiap build, jadi tanpa ini berkas menumpuk)."""
+    if a.root != "_dryrun/":
+        fail(f"Hanya '_dryrun/' yang boleh dikosongkan, bukan {a.root!r}")
+    s3 = r2_client()
+    keys = []
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=a.bucket, Prefix=a.root):
+        keys += [o["Key"] for o in page.get("Contents", [])]
+    for i in range(0, len(keys), 1000):
+        s3.delete_objects(Bucket=a.bucket, Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]]})
+    notice(f"{a.root} dikosongkan: {len(keys)} objek dihapus")
+
+
 # ----------------------------------------------------------------------------- verify-remote
 def _request(url, method, headers):
     req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT, **headers})
@@ -339,6 +352,7 @@ def main():
     add("verify-remote", cmd_verify_remote, dist=d, metrics=mt, origin={"default": "https://sipilstock.com"})
     add("cleanup", cmd_cleanup, bucket={"required": True}, root={"default": "sipilcad/"},
         keep={"type": int, "default": 3}, current={"required": True}).add_argument("--dry", action="store_true")
+    add("purge", cmd_purge, bucket={"required": True}, root={"default": "_dryrun/"})
     add("notes", cmd_notes, metrics=mt)
     a = p.parse_args()
     a.fn(a)

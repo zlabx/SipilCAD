@@ -12,6 +12,10 @@ name: WASM size
 on:
   workflow_dispatch:
   push:
+    # branches dibatasi ke main: filter path tidak berlaku untuk push tag, jadi tanpa ini
+    # workflow ini ikut jalan (sia-sia) tiap tag rilis web-v* di-push.
+    branches:
+      - main
     paths:
       - '.github/workflows/wasm-size.yml'
 
@@ -26,7 +30,7 @@ jobs:
   measure:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # build.rs mengukur jarak dari tag rilis; clone dangkal memberi label +g<hash>.
           fetch-depth: 0
@@ -64,7 +68,7 @@ jobs:
 
       # Untuk uji lokal di browser: isi artifact = isi dist/sipilcad (index.html di akar zip).
       - name: Upload build as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sipilcad-web-dist
           path: dist/sipilcad
