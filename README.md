@@ -23,7 +23,7 @@ SipilCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://githu
 - Basis saat ini: **Open CAD Studio 2026.39.0**, upstream commit [`07f25f4b`](https://github.com/HakanSeven12/OpenCADStudio/commit/07f25f4b) (29 Sep 2026).
 - Perubahan dari upstream sebatas konfigurasi CI dan rilis (lihat [Perubahan dari upstream](#perubahan-dari-upstream)): dua workflow upstream dinonaktifkan, ditambah workflow ukur dan rilis web. Kode aplikasi, branding, dan antarmuka **belum diubah**.
 - **Tayang di SipilStock** (<https://sipilstock.com/sipilcad/>) sejak rilis `web-v0.1.0` (commit `4dc5a4b9`). Teruji di Chrome dan Edge desktop: buka DWG dan DXF, gambar, simpan, dan 3D. `.wasm` utama (53,14 MiB, di atas batas 25 MiB per berkas Cloudflare Pages) dilayani dari R2 (`sipilcad-cdn.sipilstock.com`) dan terkompresi saat diunduh (sekitar 17 MB). Lihat [Keterbatasan yang diketahui](#keterbatasan-yang-diketahui).
-- Repo ini dulunya bernama **SipilXCAD** dan sudah di-rename menjadi **SipilCAD**; riwayat commit tetap utuh. Repo ini menggantikan SipilCAD lama (viewer berbasis JavaScript), yang kini diarsipkan di luar repo ini.
+- Repo ini dulunya bernama **SipilXCAD** dan sudah di-rename menjadi **SipilCAD**; riwayat commit tetap utuh. Repo ini menggantikan SipilCAD lama, sebuah viewer berbasis TypeScript (Vite) yang repo-nya kini sudah dihapus.
 
 ## Keterbatasan yang diketahui
 
