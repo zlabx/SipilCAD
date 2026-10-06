@@ -155,7 +155,7 @@ Dikerjakan oleh `.github/workflows/release-web.yml`. Prasyarat: bucket R2 publik
 
 Sudah di `main`, tetapi belum ada di rilis yang tayang (`web-v0.1.0`); baru berlaku di rilis berikutnya:
 
-- Paket memuat `LICENSE.txt` (salinan `LICENSE` yang tampil di browser, karena berkas tanpa ekstensi terunduh).
+- Paket memuat `LICENSE.txt` (salinan `LICENSE` yang tampil di browser, karena berkas tanpa ekstensi terunduh). Untuk rilis yang belum memuatnya (termasuk `web-v0.1.0`), skrip build di `zlabx` membuat `LICENSE.txt` dari `LICENSE` saat memasang.
 - `SOURCE.txt` menyebut komponen pihak ketiga yang ikut tersaji (font OFL dan font LFF).
 
 ## Checklist sebelum deploy
@@ -169,7 +169,7 @@ Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah Sipil
 - [ ] **Panggilan keluar ke pihak ketiga saat runtime.** Dari kode `src/`: feed dan halaman Discussions upstream di GitHub (`src/discussions.rs`), registry plugin dari `raw.githubusercontent.com/HakanSeven12/OpenCADStudio` serta rilis/README repo plugin lewat GitHub (`src/plugin/marketplace.rs`), thumbnail dan oEmbed YouTube untuk playlist upstream (`src/videos.rs`), dan `api.frankfurter.dev` serta Patreon (`src/patreon.rs`; kapan tepatnya dipanggil belum ditelusuri). Bila dipanggil dari browser pengguna, IP pengguna terkirim ke pihak-pihak itu. Teramati di tab Network produksi: thumbnail video `mqdefault.jpg` dimuat sebagai cadangan (kemungkinan dari YouTube). Putuskan mana yang dimatikan atau diarahkan ke SipilStock, dan perbarui Kebijakan Privasi. Saya tidak menemukan analitik atau telemetri pihak ketiga, tapi pencarian ini hanya mencakup `src/`, bukan dependensi.
 - [ ] **Berkas web dari origin sendiri.** `supporters.json` dan `video_thumbs/*.jpg` tidak ada di paket (dibuat oleh pipeline deploy upstream), sehingga muncul 404 di Console; aplikasi tetap jalan. Bisa disenyapkan dengan menyertakan berkas kosong di paket rilis (belum dilakukan).
 - [ ] **Branding dan tautan.** Judul halaman (`web-app.html`), logo, nama `OpenCADStudio` di ratusan berkas, serta tautan Patreon, open-aec.com, dan Reddit milik upstream di antarmuka. `site/CNAME` berisi `www.opencadstudio.com`; jangan dipakai. Tetap sertakan atribusi.
-- [ ] **Halaman "Tentang/Lisensi"** di dalam aplikasi: sebut Open CAD Studio oleh HakanSeven12, lisensi GPL-3.0, dan tautan ke repo ini.
+- [ ] **Halaman "Tentang/Lisensi"** di dalam aplikasi: sebut Open CAD Studio oleh HakanSeven12, lisensi GPL-3.0, dan tautan ke repo ini. Keputusan (Tahap 1, langkah 4): untuk sementara **tidak ada tautan "Sumber & Lisensi"** dari antarmuka SipilStock (kartu, halaman Apps, footer). Lisensi seharusnya tampil di dalam aplikasi itu sendiri; tautan ke `/sipilcad/SOURCE.txt` dan `/sipilcad/LICENSE.txt` ditambahkan setelah itu. Sementara ini keduanya hanya tersaji di alamat tersebut.
 - [ ] **Dependensi git eksternal.** `Cargo.toml` mengambil `iced`, fork `iced_aw` (branch `agent/fix-iced-fonts`), dan tiga crate upstream langsung dari GitHub. Bila repo atau branch itu hilang atau di-force-push, build rusak. Pertimbangkan mirror ke akun zlabx atau `cargo vendor`.
 - [ ] **`release.yml` dan `pages.yml` upstream** memakai secret milik upstream (Patreon, penandatanganan Windows/Azure, Snapcraft) dan repo/nama paket upstream. Jangan diaktifkan sebelum diadaptasi ke SipilCAD.
 - [ ] **`.github/FUNDING.yml`** masih menunjuk ke sponsor upstream. Sengaja dibiarkan agar dukungan mengalir ke penulis asli; ganti bila tidak diinginkan.
@@ -179,7 +179,7 @@ Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah Sipil
 
 ## Integrasi dengan SipilStock
 
-SipilStock ([`zlabx/zlabx`](https://github.com/zlabx/zlabx), privat) memasang SipilCAD saat deploy lewat `scripts/build-sipilcad.sh`: skrip mengunduh paket rilis `web-v*` dari repo ini (publik, tanpa token), memeriksa SHA-256, `LICENSE`, `SOURCE.txt`, dan ukuran berkas, memastikan `.wasm` di R2 terjangkau, lalu mengekstrak ke `sipilcad/` (di-gitignore). Versi yang tayang dipin lewat `DEFAULT_REF` di skrip itu (kini `web-v0.1.0`); env `SIPILCAD_REF` menimpanya (uji di Preview Cloudflare) dan `none` melewati SipilCAD. Build command Cloudflare Pages: `npm run generate:all && npm run build:sipilframe && npm run build:sipilcad`. Kartu SipilCAD di halaman utama, halaman Apps, dan dropdown Apps mengarah ke `/sipilcad/`.
+SipilStock ([`zlabx/zlabx`](https://github.com/zlabx/zlabx), privat) memasang SipilCAD saat deploy lewat `scripts/build-sipilcad.sh`: skrip mengunduh paket rilis `web-v*` dari repo ini (publik, tanpa token), memeriksa SHA-256, `LICENSE`, `SOURCE.txt`, dan ukuran berkas, menyediakan `LICENSE.txt` bila paket belum memuatnya, memastikan `.wasm` di R2 terjangkau, lalu mengekstrak ke `sipilcad/` (di-gitignore). Versi yang tayang dipin lewat `DEFAULT_REF` di skrip itu (kini `web-v0.1.0`); env `SIPILCAD_REF` menimpanya (uji di Preview Cloudflare) dan `none` melewati SipilCAD. Build command Cloudflare Pages: `npm run generate:all && npm run build:sipilframe && npm run build:sipilcad`. Kartu SipilCAD di halaman utama, halaman Apps, dan dropdown Apps mengarah ke `/sipilcad/`.
 
 ## Lisensi komponen pihak ketiga
 
