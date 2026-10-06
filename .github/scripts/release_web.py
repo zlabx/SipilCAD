@@ -113,9 +113,16 @@ dan dibangun dari commit yang sama.
 Berdasarkan Open CAD Studio oleh HakanSeven12 dan kontributor:
 https://github.com/HakanSeven12/OpenCADStudio  (GPL-3.0)
 
-Lisensi: GNU General Public License v3.0 (lihat berkas LICENSE).
+Lisensi: GNU General Public License v3.0 (lihat LICENSE.txt; salinan identik di LICENSE).
 Kode sumber lengkap, termasuk skrip build, tersedia di alamat di atas. Versi dependensi
 dikunci oleh Cargo.lock pada commit tersebut.
+
+Komponen pihak ketiga yang ikut tersaji:
+- Font web (folder fonts/): subset Noto Sans dan Noto Sans CJK, SIL Open Font License 1.1.
+  Teks lisensi dan pernyataan hak cipta: fonts/OFL.txt (juga tertanam di tiap berkas font).
+- Font garis LFF bawaan LibreCAD (tertanam di dalam berkas .wasm; sumbernya assets/fonts/*.lff
+  di repo kode sumber di atas). Header berkas .lff umumnya mencantumkan lisensinya: public domain
+  (font Hershey) dan/atau GPL v2 atau lebih baru.
 """
 
 
@@ -139,6 +146,8 @@ def cmd_package(a):
     if big:
         fail("Berkas di paket melebihi 25 MiB: " + ", ".join(f"{n} ({mib(s)})" for n, s in big))
     shutil.copyfile(a.license, stage / "LICENSE")
+    # Salinan berekstensi .txt: LICENSE tanpa ekstensi disajikan sebagai berkas biner (terunduh, bukan tampil).
+    shutil.copyfile(a.license, stage / "LICENSE.txt")
     (stage / "SOURCE.txt").write_text(source_txt(a, wasm.name, wasm_url), encoding="utf-8")
 
     pkg = out / f"sipilcad-web-{a.tag}.tar.gz"
@@ -157,6 +166,7 @@ def cmd_package(a):
     })
     save_metrics(a.metrics, m)
     notice(f"Paket {pkg.name}: {mib(pkg.stat().st_size)}, {len(files)} berkas, berkas terbesar {mib(biggest)}")
+    notice("Berkas di akar paket: " + ", ".join(sorted(n for n in files if "/" not in n)))
     wasm.unlink()  # sudah di R2; jangan ikut tersisa di dist
 
 

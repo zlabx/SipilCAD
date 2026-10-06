@@ -151,6 +151,13 @@ Dikerjakan oleh `.github/workflows/release-web.yml`. Prasyarat: bucket R2 publik
 4. Pin: ubah `DEFAULT_REF` di `scripts/build-sipilcad.sh` di `zlabx/zlabx`, push ke `main` (deploy produksi otomatis), lalu hapus variabel Preview.
 5. Rollback: isi `SIPILCAD_REF=web-v<lama>` di Production atau kembalikan `DEFAULT_REF`; `SIPILCAD_REF=none` mematikan SipilCAD sementara. Karena R2 hanya menyisakan 3 versi terbaru, rollback aman untuk dua versi ke belakang.
 
+### Belum dirilis
+
+Sudah di `main`, tetapi belum ada di rilis yang tayang (`web-v0.1.0`); baru berlaku di rilis berikutnya:
+
+- Paket memuat `LICENSE.txt` (salinan `LICENSE` yang tampil di browser, karena berkas tanpa ekstensi terunduh).
+- `SOURCE.txt` menyebut komponen pihak ketiga yang ikut tersaji (font OFL dan font LFF).
+
 ## Checklist sebelum deploy
 
 Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah SipilCAD tayang. Yang sudah dikerjakan atau terbukti ditandai centang. Sisanya sengaja ditunda, karena versi pertama hanya perlu jalan.
@@ -166,11 +173,21 @@ Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah Sipil
 - [ ] **Dependensi git eksternal.** `Cargo.toml` mengambil `iced`, fork `iced_aw` (branch `agent/fix-iced-fonts`), dan tiga crate upstream langsung dari GitHub. Bila repo atau branch itu hilang atau di-force-push, build rusak. Pertimbangkan mirror ke akun zlabx atau `cargo vendor`.
 - [ ] **`release.yml` dan `pages.yml` upstream** memakai secret milik upstream (Patreon, penandatanganan Windows/Azure, Snapcraft) dan repo/nama paket upstream. Jangan diaktifkan sebelum diadaptasi ke SipilCAD.
 - [ ] **`.github/FUNDING.yml`** masih menunjuk ke sponsor upstream. Sengaja dibiarkan agar dukungan mengalir ke penulis asli; ganti bila tidak diinginkan.
+- [x] **Lisensi font web dan font LFF** diperiksa: font web OFL 1.1 dengan `fonts/OFL.txt` di paket, font LFF public domain dan/atau GPL v2+ (lihat [Lisensi komponen pihak ketiga](#lisensi-komponen-pihak-ketiga)). Sisa: `ltypeshp.lff` tanpa baris lisensi.
+- [ ] **Daftar lisensi crate Rust pihak ketiga** belum ada di paket (upstream juga tidak punya). Opsi: `cargo-about` di workflow rilis.
 - [ ] **Bahasa Indonesia** (opsional): tambahkan locale baru dan kirim juga ke upstream.
 
 ## Integrasi dengan SipilStock
 
 SipilStock ([`zlabx/zlabx`](https://github.com/zlabx/zlabx), privat) memasang SipilCAD saat deploy lewat `scripts/build-sipilcad.sh`: skrip mengunduh paket rilis `web-v*` dari repo ini (publik, tanpa token), memeriksa SHA-256, `LICENSE`, `SOURCE.txt`, dan ukuran berkas, memastikan `.wasm` di R2 terjangkau, lalu mengekstrak ke `sipilcad/` (di-gitignore). Versi yang tayang dipin lewat `DEFAULT_REF` di skrip itu (kini `web-v0.1.0`); env `SIPILCAD_REF` menimpanya (uji di Preview Cloudflare) dan `none` melewati SipilCAD. Build command Cloudflare Pages: `npm run generate:all && npm run build:sipilframe && npm run build:sipilcad`. Kartu SipilCAD di halaman utama, halaman Apps, dan dropdown Apps mengarah ke `/sipilcad/`.
+
+## Lisensi komponen pihak ketiga
+
+Diperiksa pada Tahap 1 (Oktober 2026). Ini catatan teknis, bukan nasihat hukum.
+
+- **Font web** (`fonts/`, dimuat browser sesuai bahasa): 11 berkas subset **Noto Sans** (termasuk Noto Sans CJK dari Adobe) di bawah **SIL Open Font License 1.1**. Cara membuatnya ada di `web/fonts/generate.sh`. `fonts/OFL.txt` (pernyataan hak cipta dan teks lisensi) ikut di paket rilis yang tayang dan identik dengan upstream; metadata hak cipta dan lisensi juga tertanam di tiap berkas font. Nama font tetap "Noto Sans" dan "Noto Sans CJK", bukan nama yang dicadangkan ("Source").
+- **Font garis LFF** (`assets/fonts/*.lff`, 27 berkas, 2,52 MiB, tertanam di `.wasm`): bawaan LibreCAD. Header berkas mencantumkan lisensi **public domain** (font Hershey) dan/atau **GPL v2 atau lebih baru**, yang kompatibel dengan GPL-3.0 aplikasi ini. Pengecualian: `ltypeshp.lff` tidak punya baris lisensi di headernya; sumber aslinya belum ditelusuri.
+- **Crate Rust pihak ketiga:** upstream tidak menyertakan daftar lisensinya, dan paket web ini pun belum. Pilihan ke depan: membuat daftarnya otomatis (mis. dengan `cargo-about`) dan menyertakannya di paket.
 
 ## Lisensi
 
