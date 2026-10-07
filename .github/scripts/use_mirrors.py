@@ -41,16 +41,32 @@ def load_mirrors():
 
 
 def lock_packages(text):
-    """-> {(nama, versi): (url_git_ternormalisasi, sha) | None}"""
-    out = {}
+    """-> daftar (nama, versi, (url_git_ternormalisasi, sha) | None); duplikat tetap tercatat"""
+    out = []
     for blk in text.split("[[package]]")[1:]:
         n = re.search(r'^name = "([^"]+)"', blk, re.M)
         v = re.search(r'^version = "([^"]+)"', blk, re.M)
         if not (n and v):
             continue
         s = re.search(r'^source = "git\+([^"?#]+)(?:\?[^"#]*)?#([0-9a-f]{40})"', blk, re.M)
-        out[(n.group(1), v.group(1))] = (norm(s.group(1)), s.group(2)) if s else None
+        out.append((n.group(1), v.group(1), (norm(s.group(1)), s.group(2)) if s else None))
     return out
+
+
+def git_refs_in_manifest(doc):
+    """Dependensi bergit di sebuah manifest, tanpa bagian [patch]/[replace] (diabaikan Cargo pada non-root)."""
+    def walk(d, key):
+        if isinstance(d, dict):
+            if isinstance(d.get("git"), str):
+                yield norm(d["git"]), d.get("package") or key
+            for k, v in d.items():
+                if k in ("patch", "replace"):
+                    continue
+                yield from walk(v, k)
+        elif isinstance(d, list):
+            for v in d:
+                yield from walk(v, key)
+    return set(walk(doc, ""))
 
 
 def workspace_manifests():
@@ -63,7 +79,7 @@ def cmd_check(a):
     by = {norm(m["upstream"]): m for m in ms}
     pk = lock_packages(Path("Cargo.lock").read_text(encoding="utf-8"))
     problems, used = [], set()
-    for (n, v), src in sorted(pk.items()):
+    for n, v, src in sorted(pk):
         if not src:
             continue
         url, sha = src
@@ -77,20 +93,37 @@ def cmd_check(a):
         if u not in used:
             print(f"::warning title=use_mirrors::{u} ada di mirrors.json tetapi tidak dipakai Cargo.lock")
     if not a.offline:
+        import tomllib
+        needed = {}  # url upstream -> {nama paket: dirujuk dari}
         for m in ms:
             url = m["mirror"].rstrip("/") + ".git"
             with tempfile.TemporaryDirectory() as td:
                 subprocess.run(["git", "init", "-q", td], check=True)
                 f = subprocess.run(["git", "-C", td, "fetch", "-q", "--depth=1", url, m["pin"]], capture_output=True, text=True)
                 ok = f.returncode == 0 and subprocess.run(["git", "-C", td, "cat-file", "-e", m["pin"] + "^{commit}"]).returncode == 0
-            print(f"  mirror {url}: commit {m['pin'][:8]} {'bisa diambil' if ok else 'TIDAK bisa diambil'}")
-            if not ok:
-                problems.append(f"commit {m['pin'][:8]} tidak bisa diambil dari {url}")
+                print(f"  mirror {url}: commit {m['pin'][:8]} {'bisa diambil' if ok else 'TIDAK bisa diambil'}")
+                if not ok:
+                    problems.append(f"commit {m['pin'][:8]} tidak bisa diambil dari {url}")
+                    continue
+                subprocess.run(["git", "-C", td, "checkout", "-q", "FETCH_HEAD"], capture_output=True)
+                for cargo in Path(td).rglob("Cargo.toml"):
+                    try:
+                        doc = tomllib.loads(cargo.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    for tgt, name in git_refs_in_manifest(doc):
+                        if tgt in by and tgt != norm(m["upstream"]):
+                            needed.setdefault(tgt, {}).setdefault(name, norm(m["upstream"]).split("github.com/")[-1])
+        for tgt, names in sorted(needed.items()):
+            have = set(by[tgt].get("patch", []))
+            for name, frm in sorted(names.items()):
+                if name not in have:
+                    problems.append(f"{frm} merujuk {name} dari {tgt} lewat git, tetapi '{name}' belum ada di daftar 'patch' mirrors.json (akan muncul dua salinan crate)")
     if problems:
         for p in problems:
             print(f"::error title=use_mirrors::{p}")
         raise SystemExit(1)
-    print(f"check OK: {len(used)} sumber git tertutup pemetaan, pin sama dengan Cargo.lock" + ("" if a.offline else ", semua commit terambil dari mirror"))
+    print(f"check OK: {len(used)} sumber git tertutup pemetaan, pin sama dengan Cargo.lock" + ("" if a.offline else ", semua commit terambil dari mirror, semua rujukan tidak langsung tercakup daftar patch"))
 
 
 # ----------------------------------------------------------------------------- apply
@@ -138,33 +171,34 @@ def cmd_apply(a):
 
 # ----------------------------------------------------------------------------- verify-lock
 def cmd_verify_lock(a):
+    from collections import Counter
     ms = load_mirrors()
     old = lock_packages(Path(a.base).read_text(encoding="utf-8"))
     new = lock_packages(Path("Cargo.lock").read_text(encoding="utf-8"))
+    co, cn = Counter((n, v) for n, v, _ in old), Counter((n, v) for n, v, _ in new)
     problems = []
-    for k in sorted(set(old) - set(new)):
-        problems.append(f"paket hilang dari lock baru: {k[0]} {k[1]}")
-    for k in sorted(set(new) - set(old)):
-        problems.append(f"paket baru muncul di lock: {k[0]} {k[1]}")
-    for k in sorted(set(old) & set(new)):
-        o, n = old[k], new[k]
-        if (o is None) != (n is None):
-            problems.append(f"jenis sumber berubah untuk {k[0]} {k[1]}")
-        elif o and o[1] != n[1]:
-            problems.append(f"commit berubah untuk {k[0]} {k[1]}: {o[1][:12]} -> {n[1][:12]}")
+    for k in sorted(set(co) | set(cn)):
+        if co[k] != cn[k]:
+            what = "DUPLIKAT (dua salinan crate yang sama dari sumber berbeda)" if cn[k] > co[k] else "berubah jumlahnya"
+            problems.append(f"{k[0]} {k[1]}: {co[k]} entri di lock asli, {cn[k]} di lock baru; {what}")
+    oldsrc = {(n, v): s for n, v, s in old}
+    for n, v, src in new:
+        o = oldsrc.get((n, v))
+        if o and src and o[1] != src[1]:
+            problems.append(f"commit berubah untuk {n} {v}: {o[1][:12]} -> {src[1][:12]}")
     ups = {norm(m["upstream"]) for m in ms}
     mir = {norm(m["mirror"]) for m in ms}
-    for k, src in new.items():
+    for n, v, src in new:
         if src and src[0] in ups:
-            problems.append(f"{k[0]} masih bersumber dari upstream {src[0]}")
-        if src and src[0] not in mir:
-            problems.append(f"{k[0]} bersumber dari git tak dikenal {src[0]}")
+            problems.append(f"{n} {v} masih bersumber dari upstream {src[0]}")
+        elif src and src[0] not in mir:
+            problems.append(f"{n} {v} bersumber dari git tak dikenal {src[0]}")
     if problems:
         for p in problems:
             print(f"::error title=use_mirrors::{p}")
         raise SystemExit(1)
-    ng = sum(1 for v in new.values() if v)
-    print(f"verify-lock OK: {len(new)} paket, versi identik dengan lock asli; {ng} paket git kini dari mirror dengan commit yang sama")
+    ng = sum(1 for _, _, s in new if s)
+    print(f"verify-lock OK: {len(new)} entri, versi identik dengan lock asli tanpa duplikat; {ng} paket git kini dari mirror dengan commit yang sama")
 
 
 def main():

@@ -1,12 +1,12 @@
 {
-  "_catatan": "Pemetaan dependensi git -> mirror (fork beku, diarsipkan) di akun zlabx. Hanya dipakai untuk jalur darurat (use_mirrors.py) bila upstream hilang atau di-force-push; build normal tetap memakai upstream. 'pin' = commit penuh yang harus sama dengan Cargo.lock. 'patch' = paket yang perlu dialihkan lewat [patch] karena sumbernya dependensi tidak langsung (dideklarasikan di manifest iced, bukan di manifest kita).",
+  "_catatan": "Pemetaan dependensi git -> mirror (fork beku, diarsipkan) di akun zlabx. Hanya dipakai untuk jalur darurat (use_mirrors.py) bila upstream hilang atau di-force-push; build normal tetap memakai upstream. 'pin' = commit penuh yang harus sama dengan Cargo.lock. 'patch' = paket yang perlu dialihkan lewat [patch] karena dirujuk lewat git oleh manifest repo lain (dependensi tidak langsung: winit/cryoglyph oleh iced, opencadcodec oleh opencadkernel, opencadkernel oleh opencadgraph). Tanpa ini muncul dua salinan crate yang sama (satu dari upstream, satu dari mirror) dan build gagal dengan 'multiple different versions of crate'. `use_mirrors.py check` menggagalkan diri bila ada rujukan tidak langsung yang belum tercantum di sini.",
   "mirrors": [
     {"upstream": "https://github.com/iced-rs/iced", "mirror": "https://github.com/zlabx/iced-mirror", "pin": "23604ff22ab0aad9e00b9327cb7b8546ed84db39"},
     {"upstream": "https://github.com/iced-rs/winit", "mirror": "https://github.com/zlabx/winit-mirror", "pin": "05b8ff17a06562f0a10bb46e6eaacbe2a95cb5ed", "patch": ["winit"]},
     {"upstream": "https://github.com/iced-rs/cryoglyph", "mirror": "https://github.com/zlabx/cryoglyph-mirror", "pin": "53ba3e879539d19ed8162942126a977ec896cc3b", "patch": ["cryoglyph"]},
     {"upstream": "https://github.com/HakanSeven12/iced_aw", "mirror": "https://github.com/zlabx/iced_aw-mirror", "pin": "9bff59df71c215abe91710870634886967fc9f1c"},
-    {"upstream": "https://github.com/HakanSeven12/opencadcodec", "mirror": "https://github.com/zlabx/opencadcodec-mirror", "pin": "cdf227782acab8b0b7035d99ed02530a90ae6773"},
-    {"upstream": "https://github.com/HakanSeven12/opencadkernel", "mirror": "https://github.com/zlabx/opencadkernel-mirror", "pin": "52a9ebeb9e7cd7815154ed261437908a88271753"},
+    {"upstream": "https://github.com/HakanSeven12/opencadcodec", "mirror": "https://github.com/zlabx/opencadcodec-mirror", "pin": "cdf227782acab8b0b7035d99ed02530a90ae6773", "patch": ["opencadcodec"]},
+    {"upstream": "https://github.com/HakanSeven12/opencadkernel", "mirror": "https://github.com/zlabx/opencadkernel-mirror", "pin": "52a9ebeb9e7cd7815154ed261437908a88271753", "patch": ["opencadkernel"]},
     {"upstream": "https://github.com/HakanSeven12/opencadgraph", "mirror": "https://github.com/zlabx/opencadgraph-mirror", "pin": "597c8b817703491dd41bbbdb06e8c69d524ff2f8"}
   ]
 }
