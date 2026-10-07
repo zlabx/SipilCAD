@@ -1,0 +1,86 @@
+# SipilCAD: latihan jalur darurat dependensi git.
+#
+# Build normal memakai dependensi git langsung dari upstream (iced, winit, cryoglyph, iced_aw,
+# opencadcodec/kernel/graph). Bila salah satu hilang atau di-force-push, build rilis berikutnya gagal.
+# Workflow ini membuktikan (dan menjaga tetap terbukti) bahwa mirror di akun zlabx (fork beku,
+# diarsipkan) bisa menggantikan mereka: manifest dialihkan ke mirror oleh use_mirrors.py di runner
+# (TIDAK dikomit), Cargo.lock ditulis ulang oleh Cargo sendiri, lalu diperiksa bahwa versi dan commit
+# tidak bergeser, dan terakhir `cargo check` wasm32 memakai --locked.
+#
+# Berjalan manual (workflow_dispatch) dan otomatis hanya saat berkas ini, skrip, atau pemetaan berubah.
+# Tidak mengubah repo, tidak ada secret.
+name: Mirror drill
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/mirror-drill.yml'
+      - '.github/scripts/use_mirrors.py'
+      - '.github/mirrors.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-drill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check mirrors (pemetaan, pin, commit terambil dari mirror)
+        run: python3 .github/scripts/use_mirrors.py check
+
+      - name: Apply mirrors to manifests (hanya di runner)
+        run: |
+          cp Cargo.lock "$RUNNER_TEMP/Cargo.lock.orig"
+          python3 .github/scripts/use_mirrors.py apply
+
+      # Cargo menulis ulang Cargo.lock sendiri (sumber berubah); tidak diedit tangan.
+      - name: Resolve lock with Cargo (cargo fetch)
+        shell: bash
+        run: |
+          set +e
+          cargo fetch --target wasm32-unknown-unknown 2>&1 | tee "$RUNNER_TEMP/fetch.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -n 30 "$RUNNER_TEMP/fetch.log" | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=cargo fetch gagal::${msg}"
+          fi
+          exit "$rc"
+
+      - name: Verify lock (versi dan commit identik, semua sumber dari mirror)
+        shell: bash
+        run: |
+          python3 .github/scripts/use_mirrors.py verify-lock --base "$RUNNER_TEMP/Cargo.lock.orig"
+          changed=$(git diff --numstat -- Cargo.lock | awk '{print $1" ditambah, "$2" dihapus"}')
+          echo "::notice title=mirror-drill::Cargo.lock berubah: ${changed}"
+
+      - name: Build check (wasm32, --locked)
+        shell: bash
+        run: |
+          set +e
+          cargo check --locked --target wasm32-unknown-unknown -p OpenCADStudio -p ocs_web_worker 2>&1 | tee "$RUNNER_TEMP/check.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -n 30 "$RUNNER_TEMP/check.log" | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=cargo check gagal::${msg}"
+          else
+            echo "::notice title=mirror-drill::cargo check wasm32 --locked berhasil dengan semua dependensi git dari mirror"
+          fi
+          exit "$rc"
