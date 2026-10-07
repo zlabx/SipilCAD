@@ -43,6 +43,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Python di ubuntu-22.04 adalah 3.10 (belum punya tomllib); skrip memakai tomli sebagai cadangan.
+      - name: Install tomli
+        run: python3 -m pip install --quiet tomli
+
       - name: Check mirrors (pemetaan, pin, commit terambil dari mirror)
         run: python3 .github/scripts/use_mirrors.py check
 

@@ -93,7 +93,13 @@ def cmd_check(a):
         if u not in used:
             print(f"::warning title=use_mirrors::{u} ada di mirrors.json tetapi tidak dipakai Cargo.lock")
     if not a.offline:
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            try:
+                import tomli as tomllib
+            except ModuleNotFoundError:
+                fail("butuh Python >= 3.11 atau paket 'tomli' (pip install tomli)")
         needed = {}  # url upstream -> {nama paket: dirujuk dari}
         for m in ms:
             url = m["mirror"].rstrip("/") + ".git"
@@ -208,7 +214,16 @@ def main():
     sub.add_parser("apply").set_defaults(fn=cmd_apply)
     v = sub.add_parser("verify-lock"); v.add_argument("--base", required=True); v.set_defaults(fn=cmd_verify_lock)
     a = p.parse_args()
-    a.fn(a)
+    try:
+        a.fn(a)
+    except SystemExit:
+        raise
+    except Exception as e:  # noqa: BLE001 - tampilkan sebagai anotasi, jangan hanya traceback
+        import traceback
+        tb = traceback.format_exc().strip().splitlines()[-6:]
+        msg = "%0A".join(l.replace("%", "%25") for l in tb)
+        print(f"::error title=use_mirrors galat tak terduga::{msg}", flush=True)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
