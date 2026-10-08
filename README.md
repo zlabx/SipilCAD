@@ -21,7 +21,7 @@ SipilCAD adalah turunan (derivative work) dari **[Open CAD Studio](https://githu
 ## Status
 
 - Basis saat ini: **Open CAD Studio 2026.39.0**, upstream commit [`07f25f4b`](https://github.com/HakanSeven12/OpenCADStudio/commit/07f25f4b) (29 Sep 2026).
-- Perubahan dari upstream sebatas konfigurasi CI dan rilis (lihat [Perubahan dari upstream](#perubahan-dari-upstream)): dua workflow upstream dinonaktifkan, ditambah workflow ukur dan rilis web. Kode aplikasi, branding, dan antarmuka **belum diubah**.
+- Perubahan dari upstream sebatas konfigurasi CI dan rilis (lihat [Perubahan dari upstream](#perubahan-dari-upstream)): dua workflow upstream dinonaktifkan, ditambah workflow ukur, rilis web, dan latihan jalur darurat dependensi (mirror). Kode aplikasi, branding, dan antarmuka **belum diubah**.
 - **Tayang di SipilStock** (<https://sipilstock.com/sipilcad/>) sejak rilis `web-v0.1.0` (commit `4dc5a4b9`). Teruji di Chrome dan Edge desktop: buka DWG dan DXF, gambar, simpan, dan 3D. `.wasm` utama (53,14 MiB, di atas batas 25 MiB per berkas Cloudflare Pages) dilayani dari R2 (`sipilcad-cdn.sipilstock.com`) dan terkompresi saat diunduh (sekitar 17 MB). Lihat [Keterbatasan yang diketahui](#keterbatasan-yang-diketahui).
 - Repo ini dulunya bernama **SipilXCAD** dan sudah di-rename menjadi **SipilCAD**; riwayat commit tetap utuh. Repo ini menggantikan SipilCAD lama, sebuah viewer berbasis TypeScript (Vite) yang repo-nya kini sudah dihapus.
 
@@ -31,7 +31,7 @@ Versi pertama hanya menargetkan "jalan"; yang berikut diketahui dan sengaja belu
 
 - **Firefox:** membuka DWG/DXF gagal dengan galat `Web parser worker: initialize worker: out of memory`. Galat yang sama muncul di aplikasi web resmi Open CAD Studio pada Firefox yang sama, jadi bukan akibat build ini. Baru teruji di satu mesin Windows.
 - **Ponsel:** masalah WebGL pernah dilaporkan; belum diselidiki. Praktis hanya Chrome dan Edge desktop yang didukung.
-- **Muat pertama berat:** sekitar 17 MB terkompresi (sekitar 12 detik pada koneksi 11 Mbps). Setelahnya dari cache browser, karena `.wasm` dilayani dengan `Cache-Control: public, max-age=31536000, immutable`.
+- **Muat pertama berat:** sekitar 17 MB terkompresi (sekitar 12 detik pada koneksi 11 Mbps). Setelahnya dari cache browser, karena `.wasm` dilayani dengan `Cache-Control: public, max-age=31536000, immutable`. Cache Rule di edge Cloudflare sengaja **tidak dipasang** (keputusan pemilik, Oktober 2026): respons wasm saat ini `cf-cache-status: DYNAMIC`, jadi tiap pengunjung baru dibaca langsung dari R2 (egress R2 gratis dan kuota baca gratis 10 juta per bulan jauh dari habis). Waktu muat 12 detik untuk 17 MB berarti sekitar 11 Mbps, kemungkinan besar dibatasi koneksi pengguna sehingga manfaatnya belum pasti. Bila muat pertama dikeluhkan: ukur dulu dengan `curl.exe -s -o NUL -H "Accept-Encoding: br" -w "ttfb=%{time_starttransfer}s total=%{time_total}s kecepatan=%{speed_download}B/s\n" <URL wasm>` beberapa kali; bila `ttfb` besar (di atas sekitar 1 detik), pasang aturan di Cloudflare: Caching, Cache Rules, hostname `sipilcad-cdn.sipilstock.com`, Eligible for cache, Edge TTL "Use cache-control header if present, bypass cache if not", Browser TTL respect origin; verifikasi `cf-cache-status: HIT` pada permintaan kedua. Catatan: versi lama yang dihapus pembersihan R2 bisa tetap tersaji dari cache edge sampai tergusur.
 - **Galat 404 di Console** untuk `supporters.json` dan `video_thumbs/*.jpg`: berkas itu dibuat oleh pipeline deploy upstream dan tidak ada di paket ini. Aplikasi tetap jalan (daftar pendukung kosong, thumbnail video memakai cadangan). Kosmetik.
 - **Peringatan `integrity` di Console** dari Chrome/Edge untuk preload `.wasm`: atribut itu diabaikan pada preload jenis `fetch`. Tidak berdampak; `.wasm` hanya diunduh sekali.
 
@@ -195,6 +195,23 @@ Tiap commit pin terbukti bisa diambil lewat git dari URL mirror-nya. Enam mirror
 
 **Catatan lain:** rollback rilis aman dua versi ke belakang (R2 menyisakan 3 versi), dan `ci.yml` serta `web-check.yml` upstream sengaja tidak diubah supaya selisih dengan upstream kecil.
 
+## Peta jalan
+
+Rencana final (Oktober 2026). Tahap awal (bucket R2, pipeline rilis, integrasi SipilStock, tayang) sudah selesai dan tidak diberi nomor di sini.
+
+| Tahap | Isi | Status |
+|---|---|---|
+| 1 | Kepatuhan dan tampilan lisensi (`LICENSE.txt`, periksa font, tautan lisensi) | Selesai. `LICENSE.txt` disajikan `zlabx`; paket rilis berikutnya memuatnya. Tautan "Sumber & Lisensi" sengaja belum ada (lisensi seharusnya tampil di dalam aplikasi) |
+| 2 | Ketahanan build: mirror 7 dependensi git, jalur darurat, `Mirror drill` | Selesai |
+| 3 | Performa muat (Cache Rule untuk wasm) | Dilewati dengan sengaja |
+| 4 | Kerapian Console dan kosmetik (`supporters.json`, peringatan `integrity`) | Belum |
+| 5 | SEO dan indeks halaman (judul, deskripsi, indeks atau noindex) | Belum |
+| 6 | Privasi dan panggilan keluar ke pihak ketiga, termasuk Kebijakan Privasi SipilStock | Belum |
+| 7 | Branding, locale Indonesia, halaman Tentang/Lisensi di dalam aplikasi, daftar lisensi crate | Belum |
+| 8 | Operasional jangka panjang dan penutupan (Budget Alert R2, uptime check, rotasi token, README final, pencabutan token) | Belum |
+
+Pernah diusulkan lalu dibuang atas keputusan pemilik: mempersempit akses token, dan teks "Chrome/Edge desktop" di kartu SipilStock. Firefox dan WebGL ponsel tidak ditangani (lihat [Keterbatasan yang diketahui](#keterbatasan-yang-diketahui)).
+
 ## Checklist sebelum deploy
 
 Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah SipilCAD tayang. Yang sudah dikerjakan atau terbukti ditandai centang. Sisanya sengaja ditunda, karena versi pertama hanya perlu jalan.
@@ -203,6 +220,7 @@ Awalnya hasil audit membaca kode dan workflow upstream; diperbarui setelah Sipil
 - [x] **Ukuran build web.** `.wasm` utama 53,14 MiB melebihi batas 25 MiB per berkas Cloudflare Pages, jadi dilayani dari R2 dengan domain kustom (lihat Rilis build web). Berkas lain di paket semuanya di bawah batas (terbesar sekitar 10 MiB, font). Mengecilkan `.wasm` (`opt-level`, LTO, `wasm-opt`) tidak dicoba.
 - [x] **Toolchain build.** Build Rust memakan 11 sampai 18 menit (batas build Pages 20 menit), jadi dibangun di GitHub Actions; build Pages hanya mengunduh paket rilis.
 - [x] **Header cross-origin isolation: tidak diperlukan.** Terbukti: aplikasi berjalan di Chrome dan Edge produksi tanpa `_headers` dan tanpa COOP/COEP. `src/par.rs` menunjukkan WASM berjalan tanpa thread.
+- [ ] **Cache Rule untuk wasm di edge Cloudflare** dilewati dengan sengaja (keputusan pemilik); alasan dan cara memasangnya ada di [Keterbatasan yang diketahui](#keterbatasan-yang-diketahui).
 - [ ] **Panggilan keluar ke pihak ketiga saat runtime.** Dari kode `src/`: feed dan halaman Discussions upstream di GitHub (`src/discussions.rs`), registry plugin dari `raw.githubusercontent.com/HakanSeven12/OpenCADStudio` serta rilis/README repo plugin lewat GitHub (`src/plugin/marketplace.rs`), thumbnail dan oEmbed YouTube untuk playlist upstream (`src/videos.rs`), dan `api.frankfurter.dev` serta Patreon (`src/patreon.rs`; kapan tepatnya dipanggil belum ditelusuri). Bila dipanggil dari browser pengguna, IP pengguna terkirim ke pihak-pihak itu. Teramati di tab Network produksi: thumbnail video `mqdefault.jpg` dimuat sebagai cadangan (kemungkinan dari YouTube). Putuskan mana yang dimatikan atau diarahkan ke SipilStock, dan perbarui Kebijakan Privasi. Saya tidak menemukan analitik atau telemetri pihak ketiga, tapi pencarian ini hanya mencakup `src/`, bukan dependensi.
 - [ ] **Berkas web dari origin sendiri.** `supporters.json` dan `video_thumbs/*.jpg` tidak ada di paket (dibuat oleh pipeline deploy upstream), sehingga muncul 404 di Console; aplikasi tetap jalan. Bisa disenyapkan dengan menyertakan berkas kosong di paket rilis (belum dilakukan).
 - [ ] **Branding dan tautan.** Judul halaman (`web-app.html`), logo, nama `OpenCADStudio` di ratusan berkas, serta tautan Patreon, open-aec.com, dan Reddit milik upstream di antarmuka. `site/CNAME` berisi `www.opencadstudio.com`; jangan dipakai. Tetap sertakan atribusi.
