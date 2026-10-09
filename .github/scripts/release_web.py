@@ -33,6 +33,10 @@ def notice(msg):
     print(f"::notice title=release-web::{msg}", flush=True)
 
 
+def warning(msg):
+    print(f"::warning title=release-web::{msg}", flush=True)
+
+
 def fail(msg):
     print(f"::error title=release-web::{msg}", flush=True)
     raise SystemExit(msg)
@@ -108,6 +112,43 @@ def strip_wasm_preload_integrity(text):
     return LINK_TAG_RE.sub(repl, text), changed
 
 
+ROBOTS_META_RE = re.compile(r"""<meta\b[^>]*\bname\s*=\s*(["'])robots\1[^>]*>""", re.IGNORECASE)
+CONTENT_ATTR_RE = re.compile(r"""\bcontent\s*=\s*(["'])(.*?)\1""", re.IGNORECASE | re.DOTALL)
+NOINDEX_RE = re.compile(r"\b(?:noindex|none)\b", re.IGNORECASE)
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+NOINDEX_CONTENT = "noindex, follow"
+
+
+def robots_tag_noindex(tag):
+    m = CONTENT_ATTR_RE.search(tag)
+    return bool(m) and bool(NOINDEX_RE.search(m.group(2)))
+
+
+def ensure_noindex(text):
+    """Pastikan halaman memuat <meta name="robots"> berisi noindex (keputusan pemilik: /sipilcad/ tidak diindeks).
+
+    Upstream saat ini sudah menyertakannya di web-app.html; fungsi ini menjaga agar build kita tetap noindex
+    bila upstream mengubah atau menghapusnya. Tag di dalam komentar HTML diabaikan.
+    Mengembalikan (teks baru, status) dengan status "sudah", "diperbaiki", atau "ditambahkan"."""
+    masked = HTML_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), text)  # offset tetap sama dengan teks asli
+    metas = list(ROBOTS_META_RE.finditer(masked))
+    if any(robots_tag_noindex(m.group(0)) for m in metas):
+        return text, "sudah"
+    if metas:
+        m = metas[0]
+        tag = text[m.start():m.end()]
+        if CONTENT_ATTR_RE.search(tag):
+            new_tag = CONTENT_ATTR_RE.sub(f'content="{NOINDEX_CONTENT}"', tag, count=1)
+        else:
+            new_tag = re.sub(r"\s*/?>$", f' content="{NOINDEX_CONTENT}" />', tag)
+        return text[:m.start()] + new_tag + text[m.end():], "diperbaiki"
+    head = re.search(r"<head\b[^>]*>", masked, re.IGNORECASE)
+    if not head:
+        fail("index.html tanpa <head>: tidak bisa memasang meta robots noindex")
+    meta = f'\n    <meta name="robots" content="{NOINDEX_CONTENT}" />'
+    return text[:head.end()] + meta + text[head.end():], "ditambahkan"
+
+
 def cmd_patch(a):
     dist = Path(a.dist)
     wasm = find_main_wasm(dist).name
@@ -131,7 +172,16 @@ def cmd_patch(a):
         fail(f"integrity modulepreload JS ikut berubah ({modulepreload_before} -> {modulepreload_after})")
     if any(is_wasm_preload(t) and has_integrity(t) for t in LINK_TAG_RE.findall(text)):
         fail("Masih ada <link rel=preload> wasm yang ber-integrity setelah pembersihan")
+    text, noindex = ensure_noindex(text)
+    masked = HTML_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), text)
+    if not any(robots_tag_noindex(m.group(0)) for m in ROBOTS_META_RE.finditer(masked)):
+        fail("meta robots noindex tidak terpasang setelah ensure_noindex")
     index.write_text(text, encoding="utf-8")
+    if noindex == "sudah":
+        notice("index.html: meta robots noindex sudah ada; /sipilcad/ tidak diindeks")
+    else:
+        warning(f"index.html: meta robots noindex {noindex} oleh patch; upstream mengubah atau menghapus "
+                "tag itu di web-app.html? Periksa perubahan upstream (keputusan pemilik: tetap noindex)")
     if stripped:
         notice(f"index.html: integrity dihapus dari {stripped} preload wasm; "
                f"{modulepreload_after} modulepreload JS tetap ber-integrity")
@@ -148,7 +198,7 @@ def cmd_patch(a):
         notice(f"Berkas lain yang menyebut nama wasm (informasi saja): {', '.join(others)}")
     m = load_metrics(a.metrics)
     m.update({"wasm_name": wasm, "wasm_url": new, "patched_refs": count,
-              "preload_integrity_removed": stripped})
+              "preload_integrity_removed": stripped, "noindex": noindex})
     save_metrics(a.metrics, m)
 
 

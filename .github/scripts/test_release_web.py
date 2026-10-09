@@ -129,6 +129,101 @@ class PatchTests(unittest.TestCase):
             self.patch()
 
 
+class NoindexTests(unittest.TestCase):
+    def robots_tags(self, html):
+        masked = rw.HTML_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), html)
+        return [m.group(0) for m in rw.ROBOTS_META_RE.finditer(masked)]
+
+    def test_fixture_asli_sudah_noindex(self):
+        html = FIXTURE.read_text(encoding="utf-8")
+        new, status = rw.ensure_noindex(html)
+        self.assertEqual(status, "sudah")
+        self.assertEqual(new, html)
+
+    def test_tag_dihapus_upstream_maka_ditambahkan(self):
+        html = FIXTURE.read_text(encoding="utf-8")
+        html = re.sub(r"[ \t]*<meta name=\"robots\"[^>]*>\n?", "", html)
+        self.assertEqual(self.robots_tags(html), [])
+        new, status = rw.ensure_noindex(html)
+        self.assertEqual(status, "ditambahkan")
+        tags = self.robots_tags(new)
+        self.assertEqual(len(tags), 1)
+        self.assertTrue(rw.robots_tag_noindex(tags[0]))
+        self.assertLess(new.index("<head"), new.index('name="robots"'))
+        self.assertLess(new.index('name="robots"'), new.index("</head>"))
+        self.assertEqual(rw.ensure_noindex(new), (new, "sudah"))  # idempoten
+
+    def test_diubah_menjadi_index_maka_diperbaiki(self):
+        html = '<html><head><meta name="robots" content="index, follow" /><title>x</title></head></html>'
+        new, status = rw.ensure_noindex(html)
+        self.assertEqual(status, "diperbaiki")
+        self.assertIn('<meta name="robots" content="noindex, follow" />', new)
+        self.assertIn("<title>x</title>", new)
+
+    def test_urutan_atribut_dan_kutip_tunggal(self):
+        html = "<head><meta content='index' name='robots'></head>"
+        new, status = rw.ensure_noindex(html)
+        self.assertEqual(status, "diperbaiki")
+        self.assertTrue(rw.robots_tag_noindex(self.robots_tags(new)[0]))
+        self.assertIn("name='robots'", new)
+
+    def test_tanpa_atribut_content(self):
+        new, status = rw.ensure_noindex('<head><meta name="robots"></head>')
+        self.assertEqual(status, "diperbaiki")
+        self.assertTrue(rw.robots_tag_noindex(self.robots_tags(new)[0]))
+
+    def test_none_dianggap_noindex(self):
+        html = '<head><meta name="robots" content="none"></head>'
+        self.assertEqual(rw.ensure_noindex(html), (html, "sudah"))
+
+    def test_tag_di_dalam_komentar_diabaikan(self):
+        html = '<head><!-- <meta name="robots" content="noindex"> --></head>'
+        new, status = rw.ensure_noindex(html)
+        self.assertEqual(status, "ditambahkan")
+        self.assertIn('<!-- <meta name="robots" content="noindex"> -->', new)  # komentar utuh
+        self.assertEqual(len(self.robots_tags(new)), 1)
+
+    def test_meta_lain_tidak_tersentuh(self):
+        html = '<head><meta name="googlebot" content="index"><meta name="robots" content="noindex"></head>'
+        self.assertEqual(rw.ensure_noindex(html), (html, "sudah"))
+        html2 = '<head><meta name="googlebot" content="index"></head>'
+        new, status = rw.ensure_noindex(html2)
+        self.assertEqual(status, "ditambahkan")
+        self.assertIn('<meta name="googlebot" content="index">', new)
+
+    def test_tanpa_head_gagal(self):
+        with self.assertRaises(SystemExit):
+            rw.ensure_noindex("<html><body>x</body></html>")
+
+    def test_cmd_patch_menjaga_noindex_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            (dist / WASM).write_bytes(b"\0asm")
+            html = re.sub(r"[ \t]*<meta name=\"robots\"[^>]*>\n?", "", FIXTURE.read_text(encoding="utf-8"))
+            (dist / "index.html").write_text(html, encoding="utf-8")
+            out = run(rw.cmd_patch, dist=str(dist), metrics=str(root / "m.json"),
+                      base_path="/sipilcad/", public_url=R2, prefix="sipilcad/web-v9.9.9")
+            result = (dist / "index.html").read_text(encoding="utf-8")
+            self.assertTrue(rw.robots_tag_noindex(self.robots_tags(result)[0]))
+            self.assertIn("::warning title=release-web::index.html: meta robots noindex ditambahkan", out)
+            self.assertEqual(json.loads((root / "m.json").read_text())["noindex"], "ditambahkan")
+
+    def test_cmd_patch_normal_hanya_notice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist = root / "dist"
+            dist.mkdir()
+            (dist / WASM).write_bytes(b"\0asm")
+            (dist / "index.html").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+            out = run(rw.cmd_patch, dist=str(dist), metrics=str(root / "m.json"),
+                      base_path="/sipilcad/", public_url=R2, prefix="sipilcad/web-v9.9.9")
+            self.assertIn("::notice title=release-web::index.html: meta robots noindex sudah ada", out)
+            self.assertNotIn("::warning", out)
+            self.assertEqual(json.loads((root / "m.json").read_text())["noindex"], "sudah")
+
+
 class PackageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
