@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tarfile
@@ -68,6 +69,45 @@ def cmd_locate(a):
 
 
 # ----------------------------------------------------------------------------- patch
+LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+REL_PRELOAD_RE = re.compile(r"""\brel\s*=\s*(["'])preload\1""", re.IGNORECASE)
+REL_MODULEPRELOAD_RE = re.compile(r"""\brel\s*=\s*(["'])modulepreload\1""", re.IGNORECASE)
+HREF_RE = re.compile(r"""\bhref\s*=\s*(["'])(.*?)\1""", re.IGNORECASE)
+INTEGRITY_ATTR_RE = re.compile(r"""\s+integrity\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+
+
+def is_wasm_preload(tag):
+    """True untuk <link rel="preload" href="....wasm">; modulepreload (JS) bukan."""
+    if not REL_PRELOAD_RE.search(tag):
+        return False
+    href = HREF_RE.search(tag)
+    return bool(href) and href.group(2).split("?")[0].endswith(".wasm")
+
+
+def has_integrity(tag):
+    return bool(INTEGRITY_ATTR_RE.search(tag))
+
+
+def strip_wasm_preload_integrity(text):
+    """Hapus atribut integrity dari <link rel="preload" ... .wasm> saja.
+
+    Chrome/Edge mengabaikan integrity pada preload dan memberi peringatan di Console.
+    Pemuat wasm memakai fetch() tanpa integrity, jadi atribut ini tidak melindungi apa pun;
+    modulepreload JS tetap ber-integrity. Mengembalikan (teks baru, jumlah tag yang diubah).
+    """
+    changed = 0
+
+    def repl(m):
+        nonlocal changed
+        tag = m.group(0)
+        if not is_wasm_preload(tag) or not has_integrity(tag):
+            return tag
+        changed += 1
+        return INTEGRITY_ATTR_RE.sub("", tag)
+
+    return LINK_TAG_RE.sub(repl, text), changed
+
+
 def cmd_patch(a):
     dist = Path(a.dist)
     wasm = find_main_wasm(dist).name
@@ -81,7 +121,23 @@ def cmd_patch(a):
     text = text.replace(old, new)
     if old in text:
         fail("Masih ada sisa URL wasm lama di index.html setelah penggantian")
+    # Peringatan Console "integrity attribute is currently ignored for preload destinations".
+    modulepreload_before = sum(1 for t in LINK_TAG_RE.findall(text)
+                               if REL_MODULEPRELOAD_RE.search(t) and has_integrity(t))
+    text, stripped = strip_wasm_preload_integrity(text)
+    modulepreload_after = sum(1 for t in LINK_TAG_RE.findall(text)
+                              if REL_MODULEPRELOAD_RE.search(t) and has_integrity(t))
+    if modulepreload_after != modulepreload_before:
+        fail(f"integrity modulepreload JS ikut berubah ({modulepreload_before} -> {modulepreload_after})")
+    if any(is_wasm_preload(t) and has_integrity(t) for t in LINK_TAG_RE.findall(text)):
+        fail("Masih ada <link rel=preload> wasm yang ber-integrity setelah pembersihan")
     index.write_text(text, encoding="utf-8")
+    if stripped:
+        notice(f"index.html: integrity dihapus dari {stripped} preload wasm; "
+               f"{modulepreload_after} modulepreload JS tetap ber-integrity")
+    else:
+        notice("index.html: tidak ada preload wasm ber-integrity; tidak ada yang diubah "
+               "(trunk berubah? peringatan Console mungkin sudah hilang)")
     others = []
     for p in sorted(dist.rglob("*")):
         if p.is_file() and p != index and p.suffix in {".js", ".html", ".json", ".css"}:
@@ -91,11 +147,38 @@ def cmd_patch(a):
     if others:
         notice(f"Berkas lain yang menyebut nama wasm (informasi saja): {', '.join(others)}")
     m = load_metrics(a.metrics)
-    m.update({"wasm_name": wasm, "wasm_url": new, "patched_refs": count})
+    m.update({"wasm_name": wasm, "wasm_url": new, "patched_refs": count,
+              "preload_integrity_removed": stripped})
     save_metrics(a.metrics, m)
 
 
 # ----------------------------------------------------------------------------- package
+# Berkas data yang dimuat aplikasi dari origin yang sama saat boot (path relatif ke /sipilcad/).
+# Upstream mengisinya dengan data Patreon, playlist YouTube, dan Discussions GitHub miliknya;
+# videos.json yang tidak kosong membuat aplikasi mengambil thumbnail dari i.ytimg.com (pihak ketiga).
+# Daftar kosong terbukti ditangani aplikasi: supporters/discussions -> daftar kosong,
+# videos -> galat "contains no videos" yang hanya mengosongkan panel (src/videos.rs).
+BLANK_DATA_FILES = ("supporters.json", "videos.json", "discussions.json")
+
+
+def blank_upstream_data(stage):
+    """Tulis `[]` ke tiap berkas di BLANK_DATA_FILES (ditimpa bila ada). Mengembalikan [(nama, entri_lama)];
+    entri_lama None bila berkas belum ada, -1 bila bukan daftar JSON yang valid."""
+    report = []
+    for name in BLANK_DATA_FILES:
+        path = Path(stage) / name
+        before = None
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                before = len(data) if isinstance(data, list) else -1
+            except ValueError:
+                before = -1
+        path.write_text("[]\n", encoding="utf-8")
+        report.append((name, before))
+    return report
+
+
 def source_txt(a, wasm, wasm_url):
     return f"""SipilCAD (build web)
 ====================
@@ -109,6 +192,13 @@ Build       : trunk build --locked --release --public-url /sipilcad/ --html-outp
 Berkas WebAssembly utama ({wasm}) tidak ada di paket ini. Berkas itu dilayani dari
 {wasm_url}
 dan dibangun dari commit yang sama.
+
+Perubahan pada hasil build (bukan pada kode sumber), oleh .github/scripts/release_web.py:
+- URL berkas WebAssembly utama di index.html diarahkan ke alamat di atas.
+- Atribut integrity dihapus dari <link rel="preload"> untuk berkas .wasm (diabaikan peramban;
+  pemuat wasm tidak memakainya).
+- supporters.json, videos.json, dan discussions.json berisi daftar kosong, sehingga aplikasi
+  tidak memuat data atau gambar dari layanan pihak ketiga saat dibuka.
 
 Berdasarkan Open CAD Studio oleh HakanSeven12 dan kontributor:
 https://github.com/HakanSeven12/OpenCADStudio  (GPL-3.0)
@@ -149,6 +239,9 @@ def cmd_package(a):
     # Salinan berekstensi .txt: LICENSE tanpa ekstensi disajikan sebagai berkas biner (terunduh, bukan tampil).
     shutil.copyfile(a.license, stage / "LICENSE.txt")
     (stage / "SOURCE.txt").write_text(source_txt(a, wasm.name, wasm_url), encoding="utf-8")
+    blanked = blank_upstream_data(stage)
+    notice("Data upstream dikosongkan di paket: " + ", ".join(
+        f"{n} ({'baru' if b is None else ('tidak valid' if b < 0 else f'{b} entri')} -> 0)" for n, b in blanked))
 
     pkg = out / f"sipilcad-web-{a.tag}.tar.gz"
     with tarfile.open(pkg, "w:gz", compresslevel=9) as t:
@@ -163,6 +256,7 @@ def cmd_package(a):
         "wasm_bytes": wasm.stat().st_size, "wasm_sha256": sha256_file(wasm),
         "package": pkg.name, "package_bytes": pkg.stat().st_size, "package_sha256": pkg_sha,
         "package_files": len(files), "package_biggest_bytes": biggest,
+        "blanked_data": [n for n, _ in blanked],
     })
     save_metrics(a.metrics, m)
     notice(f"Paket {pkg.name}: {mib(pkg.stat().st_size)}, {len(files)} berkas, berkas terbesar {mib(biggest)}")
