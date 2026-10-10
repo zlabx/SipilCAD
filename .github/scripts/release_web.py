@@ -149,6 +149,58 @@ def ensure_noindex(text):
     return text[:head.end()] + meta + text[head.end():], "ditambahkan"
 
 
+BRAND = "SipilCAD"
+UPSTREAM_NAME = "Open CAD Studio"
+TITLE_RE = re.compile(r"(<title>)(.*?)(</title>)", re.IGNORECASE | re.DOTALL)
+SPLASH_TITLE_RE = re.compile(
+    r"""(<div\s+class=(["'])title\2\s*>)\s*Open\s*<span>CAD</span>\s*Studio\s*(</div>)""",
+    re.IGNORECASE,
+)
+
+
+def rebrand_html(text):
+    """Ganti nama upstream di <title> dan teks splash (pemuat) dengan BRAND.
+
+    Hanya teks yang terlihat pengguna; tidak ada tautan atau atribusi di halaman ini. Judul tab juga
+    ditimpa JS dari locale-labels.json, jadi berkas itu diganti di rebrand_labels.
+    Mengembalikan (teks baru, dict hasil: title/splash -> "diganti" | "sudah" | "tidak ditemukan")."""
+    result = {}
+
+    def title(m):
+        if UPSTREAM_NAME in m.group(2):
+            result["title"] = "diganti"
+            return m.group(1) + m.group(2).replace(UPSTREAM_NAME, BRAND) + m.group(3)
+        result["title"] = "sudah" if BRAND in m.group(2) else "tidak ditemukan"
+        return m.group(0)
+
+    text, n = TITLE_RE.subn(title, text, count=1)
+    if n == 0:
+        result["title"] = "tidak ditemukan"
+    text, n = SPLASH_TITLE_RE.subn(
+        lambda m: f"{m.group(1)}Sipil<span>CAD</span>{m.group(3)}", text, count=1)
+    if n:
+        result["splash"] = "diganti"
+    else:
+        result["splash"] = "sudah" if re.search(r"""class=(["'])title\1\s*>\s*Sipil\s*<span>CAD</span>""", text) else "tidak ditemukan"
+    return text, result
+
+
+def rebrand_labels(path):
+    """Ganti nama upstream pada `title` tiap locale di locale-labels.json (JS menimpa judul tab dari sini).
+    Mengembalikan (jumlah locale, jumlah diganti, daftar locale yang judulnya tak memuat nama upstream)."""
+    labels = json.loads(Path(path).read_text(encoding="utf-8"))
+    changed, untouched = 0, []
+    for locale, entry in labels.items():
+        value = entry.get("title") if isinstance(entry, dict) else None
+        if isinstance(value, str) and UPSTREAM_NAME in value:
+            entry["title"] = value.replace(UPSTREAM_NAME, BRAND)
+            changed += 1
+        else:
+            untouched.append(locale)
+    Path(path).write_text(json.dumps(labels, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return len(labels), changed, untouched
+
+
 def cmd_patch(a):
     dist = Path(a.dist)
     wasm = find_main_wasm(dist).name
@@ -177,6 +229,22 @@ def cmd_patch(a):
     if not any(robots_tag_noindex(m.group(0)) for m in ROBOTS_META_RE.finditer(masked)):
         fail("meta robots noindex tidak terpasang setelah ensure_noindex")
     index.write_text(text, encoding="utf-8")
+    text, rebrand = rebrand_html(text)
+    index.write_text(text, encoding="utf-8")
+    labels_path = dist / "locale-labels.json"
+    labels = None
+    if labels_path.exists():
+        labels = rebrand_labels(labels_path)
+    missing = [k for k, v in rebrand.items() if v == "tidak ditemukan"]
+    if missing or labels is None or labels[2]:
+        warning("branding: pola upstream berubah? tidak ditemukan: "
+                + (", ".join(missing) if missing else "-")
+                + ("; locale-labels.json tidak ada" if labels is None else
+                   (f"; judul tanpa nama upstream di {len(labels[2])} locale: {', '.join(labels[2][:5])}" if labels[2] else ""))
+                + ". Periksa web-app.html dan scripts/export-locales.py.")
+    else:
+        notice(f"branding: judul tab dan splash memakai '{BRAND}' (title {rebrand['title']}, splash {rebrand['splash']}); "
+               f"{labels[1]}/{labels[0]} judul locale diganti")
     if noindex == "sudah":
         notice("index.html: meta robots noindex sudah ada; /sipilcad/ tidak diindeks")
     else:
@@ -198,7 +266,8 @@ def cmd_patch(a):
         notice(f"Berkas lain yang menyebut nama wasm (informasi saja): {', '.join(others)}")
     m = load_metrics(a.metrics)
     m.update({"wasm_name": wasm, "wasm_url": new, "patched_refs": count,
-              "preload_integrity_removed": stripped, "noindex": noindex})
+              "preload_integrity_removed": stripped, "noindex": noindex,
+              "rebrand": rebrand, "rebrand_labels_changed": labels[1] if labels else 0})
     save_metrics(a.metrics, m)
 
 
