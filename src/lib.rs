@@ -25,6 +25,7 @@ pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rest;
 pub mod scene;
+pub mod sipil; // SIPIL: tambahan khusus SipilCAD (lihat src/sipil.rs)
 pub mod snap;
 pub mod sys;
 pub mod ui;
