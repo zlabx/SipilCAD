@@ -3442,7 +3442,14 @@ fn start_page_content<'a>(
     action_width_out: std::sync::Arc<std::sync::atomic::AtomicU32>,
     active: super::StartSection,
 ) -> Element<'a, Message> {
-    let headline = text("Open CAD Studio").size(40).style(start_primary_style);
+    // SIPIL: judul Start page memakai nama SipilCAD.
+    let headline = text(if crate::sipil::HIDE_UPSTREAM_LINKS {
+        "SipilCAD"
+    } else {
+        "Open CAD Studio"
+    })
+    .size(40)
+    .style(start_primary_style);
 
     // Plain outlined button (Open / New / Help / Contribute).
     let outline_btn = |label: String, msg: Message| {
@@ -3486,55 +3493,77 @@ fn start_page_content<'a>(
         .style(|theme: &Theme, status| start_action_shape(button::danger(theme, status)))
     };
 
-    let primary_row = WrapFlow::new(vec![
+    let mut primary_items: Vec<Element<'a, Message>> = vec![
         outline_btn(crate::tr!("start", "new-drawing"), Message::TabNew).into(),
         outline_btn(crate::tr!("start", "open-file"), Message::OpenFile).into(),
-        donate_btn.into(),
-    ])
+    ];
+    // SIPIL: Donate mengarah ke Patreon upstream; disembunyikan.
+    if !crate::sipil::HIDE_UPSTREAM_LINKS {
+        primary_items.push(donate_btn.into());
+    }
+    let primary_row = WrapFlow::new(primary_items)
     .spacing_x(12.0)
     .row_h(48.0)
     .report_natural_width(action_width_out.clone());
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-    let mut secondary_items: Vec<Element<'a, Message>> = vec![
-        outline_btn(
-            crate::tr!("start", "send-feedback"),
-            Message::RibbonToolClick {
-                tool_id: "REPORT".to_string(),
-                event: crate::modules::ModuleEvent::Command("REPORT".to_string()),
-            },
-        )
-        .into(),
-        outline_btn(crate::tr!("action", "options"), Message::OptionsOpen).into(),
-    ];
+    let mut secondary_items: Vec<Element<'a, Message>> = Vec::new();
+    // SIPIL: Send Feedback (isu GitHub upstream), Plugins (daftar plugin upstream), dan tombol
+    // OCS Web/OCS Desktop (rilis upstream) disembunyikan; hanya Options yang tersisa.
+    if !crate::sipil::HIDE_UPSTREAM_LINKS {
+        secondary_items.push(
+            outline_btn(
+                crate::tr!("start", "send-feedback"),
+                Message::RibbonToolClick {
+                    tool_id: "REPORT".to_string(),
+                    event: crate::modules::ModuleEvent::Command("REPORT".to_string()),
+                },
+            )
+            .into(),
+        );
+    }
     secondary_items
-        .push(outline_btn(crate::tr!("action", "plugins"), Message::PluginManagerOpen).into());
+        .push(outline_btn(crate::tr!("action", "options"), Message::OptionsOpen).into());
+    if !crate::sipil::HIDE_UPSTREAM_LINKS {
+        secondary_items
+            .push(outline_btn(crate::tr!("action", "plugins"), Message::PluginManagerOpen).into());
+    }
     // The web build is already in the browser, so only the desktop offers a
     // link to the web version.
     #[cfg(not(target_arch = "wasm32"))]
     {
         // Filled with the active theme's primary colour.
-        secondary_items.push(
-            button(text(crate::t!("OCS Web")).size(14))
-                .on_press(Message::RibbonToolClick {
-                    tool_id: "WEBVERSION".to_string(),
-                    event: crate::modules::ModuleEvent::Command("WEBVERSION".to_string()),
-                })
-                .padding([10, 22])
-                .style(|theme: &Theme, status| start_action_shape(button::primary(theme, status)))
-                .into(),
-        );
+        if !crate::sipil::HIDE_UPSTREAM_LINKS {
+            secondary_items.push(
+                button(text(crate::t!("OCS Web")).size(14))
+                    .on_press(Message::RibbonToolClick {
+                        tool_id: "WEBVERSION".to_string(),
+                        event: crate::modules::ModuleEvent::Command("WEBVERSION".to_string()),
+                    })
+                    .padding([10, 22])
+                    .style(|theme: &Theme, status| {
+                        start_action_shape(button::primary(theme, status))
+                    })
+                    .into(),
+            );
+        }
     }
     #[cfg(target_arch = "wasm32")]
-    secondary_items.push(
-        button(text(crate::t!("OCS Desktop")).size(14))
-            .on_press(Message::OpenUrl(
-                "https://github.com/HakanSeven12/OpenCADStudio/releases/latest".to_string(),
-            ))
-            .padding([10, 22])
-            .style(|theme: &Theme, status| start_action_shape(button::primary(theme, status)))
-            .into(),
-    );
+    {
+        if !crate::sipil::HIDE_UPSTREAM_LINKS {
+            secondary_items.push(
+                button(text(crate::t!("OCS Desktop")).size(14))
+                    .on_press(Message::OpenUrl(
+                        "https://github.com/HakanSeven12/OpenCADStudio/releases/latest".to_string(),
+                    ))
+                    .padding([10, 22])
+                    .style(|theme: &Theme, status| {
+                        start_action_shape(button::primary(theme, status))
+                    })
+                    .into(),
+            );
+        }
+    }
     let secondary_row = WrapFlow::new(secondary_items)
         .spacing_x(12.0)
         .row_h(44.0)
@@ -3594,6 +3623,19 @@ fn start_page_content<'a>(
     .align_x(iced::alignment::Horizontal::Center)
     .width(Fill);
 
+    // SIPIL: tombol r/OpenCADStudio dan sponsor upstream (open-aec.com) disembunyikan.
+    let upstream_extras: Element<'a, Message> = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        Space::new().into()
+    } else {
+        column![
+            Space::new().height(iced::Length::Fixed(10.0)),
+            container(reddit_btn).center_x(Fill),
+            Space::new().height(iced::Length::Fixed(20.0)),
+            sponsors,
+        ]
+        .into()
+    };
+
     let content = column![
         Space::new().height(iced::Length::Fixed(28.0)),
         container(headline).center_x(Fill),
@@ -3601,10 +3643,7 @@ fn start_page_content<'a>(
         container(primary_row).center_x(Fill),
         Space::new().height(iced::Length::Fixed(10.0)),
         container(secondary_row).center_x(Fill),
-        Space::new().height(iced::Length::Fixed(10.0)),
-        container(reddit_btn).center_x(Fill),
-        Space::new().height(iced::Length::Fixed(20.0)),
-        sponsors,
+        upstream_extras,
         Space::new().height(iced::Length::Fixed(52.0)),
     ]
     .spacing(0)
@@ -3629,7 +3668,10 @@ fn start_page_content<'a>(
     let welcome_wide_min = measured_action_w.max(360.0);
     let avail = (avail_w - 16.0).max(0.0); // minus the page's l/r padding
     let panel_widths = [panel_w; 4];
-    let mut panel_visible = [true, true, true, true];
+    // SIPIL: panel Videos, Discussions, dan Supporters mengarah ke YouTube, GitHub, dan Patreon
+    // upstream; disembunyikan sejak awal. Urutan: [Recent, Videos, Discussions, Supporters].
+    let upstream_panels = !crate::sipil::HIDE_UPSTREAM_LINKS;
+    let mut panel_visible = [true, upstream_panels, upstream_panels, upstream_panels];
     let required_width = |visible: &[bool; 4]| {
         let visible_panels = visible.iter().filter(|&&shown| shown).count();
         welcome_wide_min
@@ -4019,25 +4061,35 @@ fn start_page_content<'a>(
                         }
                     })
             };
-            let tab_bar = Row::with_children(vec![
+            // SIPIL: tab Videos, Discussions, dan Supporters disembunyikan (lihat panel_visible).
+            let mut tabs: Vec<Element<'a, Message>> = vec![
                 tab_btn(
                     crate::tr!("start", "recent-files"),
                     super::StartSection::Recent,
                 )
                 .into(),
-                tab_btn(crate::tr!("start", "videos"), super::StartSection::Videos).into(),
-                tab_btn(crate::tr!("start", "welcome"), super::StartSection::Welcome).into(),
-                tab_btn(
-                    crate::tr!("start", "discussions"),
-                    super::StartSection::Discussions,
-                )
-                .into(),
-                tab_btn(
-                    crate::tr!("start", "supporters"),
-                    super::StartSection::Supporters,
-                )
-                .into(),
-            ])
+            ];
+            if !crate::sipil::HIDE_UPSTREAM_LINKS {
+                tabs.push(tab_btn(crate::tr!("start", "videos"), super::StartSection::Videos).into());
+            }
+            tabs.push(tab_btn(crate::tr!("start", "welcome"), super::StartSection::Welcome).into());
+            if !crate::sipil::HIDE_UPSTREAM_LINKS {
+                tabs.push(
+                    tab_btn(
+                        crate::tr!("start", "discussions"),
+                        super::StartSection::Discussions,
+                    )
+                    .into(),
+                );
+                tabs.push(
+                    tab_btn(
+                        crate::tr!("start", "supporters"),
+                        super::StartSection::Supporters,
+                    )
+                    .into(),
+                );
+            }
+            let tab_bar = Row::with_children(tabs)
             .spacing(6.0)
             .align_y(iced::Center)
             .wrap()

@@ -116,6 +116,11 @@ pub fn open_url<Message>(
     url: &str,
     _parent: Option<iced::window::Id>,
 ) -> iced::Task<Message> {
+    // SIPIL: jaring pengaman. Tautan ke proyek upstream tidak pernah dibuka dari build ini,
+    // termasuk tautan baru yang ditambahkan upstream sebelum sempat kita sembunyikan.
+    if crate::sipil::is_blocked_url(url) {
+        return iced::Task::none();
+    }
     if let Some(window) = web_sys::window() {
         let _ = window.open_with_url_and_target_and_features(url, "_blank", "noopener,noreferrer");
     }

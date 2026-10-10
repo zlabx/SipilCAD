@@ -106,7 +106,14 @@ pub fn view_window(
         row![
             logo,
             column![
-                text("Open CAD Studio").size(28).style(primary_style),
+                // SIPIL: judul dialog memakai nama SipilCAD.
+                text(if crate::sipil::HIDE_UPSTREAM_LINKS {
+                    "SipilCAD"
+                } else {
+                    "Open CAD Studio"
+                })
+                .size(28)
+                .style(primary_style),
                 text(t!("CAD application for Architecture & Engineering"))
                     .size(11)
                     .style(muted_style),
@@ -139,14 +146,40 @@ pub fn view_window(
 
     let copy = dialog_button(t!("Copy Info"), Message::AboutCopyInfo, true);
 
+    // SIPIL: atribusi hanya berupa dua tautan ke dokumen di domain SipilStock (License dan
+    // Source); tanpa tautan ke situs, Patreon, atau GitHub upstream.
+    let action_row: Element<'static, Message> = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        row![
+            dialog_button(
+                "License",
+                Message::OpenUrl(crate::sipil::LICENSE_PATH.to_string()),
+                false,
+            ),
+            dialog_button(
+                "Source",
+                Message::OpenUrl(crate::sipil::SOURCE_PATH.to_string()),
+                false,
+            ),
+            Space::new().width(content_width),
+            copy,
+        ]
+        .spacing(8)
+        .width(sizing.width)
+        .align_y(iced::Center)
+        .into()
+    } else {
+        row![Space::new().width(content_width), copy]
+            .width(sizing.width)
+            .align_y(iced::Center)
+            .into()
+    };
+
     container(
         column![
             hero,
             metadata,
             build_info,
-            row![Space::new().width(content_width), copy]
-                .width(sizing.width)
-                .align_y(iced::Center),
+            action_row,
         ]
         .spacing(12)
         .padding(16)

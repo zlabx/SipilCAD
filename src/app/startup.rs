@@ -8,7 +8,11 @@ impl OpenCADStudio {
             self.pending_startup_modals
                 .push_back(ModalKind::AssocPrompt);
         }
-        if self.donation_prompt_version != env!("OCS_APP_VERSION") {
+        // SIPIL: dialog donasi (Patreon upstream) tidak ditampilkan. `cfg!(test)` menjaga uji
+        // upstream di bawah (alur donasi) tetap berlaku; build rilis tidak menampilkannya.
+        if (!crate::sipil::HIDE_UPSTREAM_LINKS || cfg!(test))
+            && self.donation_prompt_version != env!("OCS_APP_VERSION")
+        {
             self.pending_startup_modals
                 .push_back(ModalKind::DonationPrompt);
         }

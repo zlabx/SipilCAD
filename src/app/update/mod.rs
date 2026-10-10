@@ -8881,7 +8881,9 @@ impl OpenCADStudio {
 
             Message::AboutCopyInfo => {
                 let info = format!(
-                    "Open CAD Studio v{}\nRevision: {}\nCommit date: {}\nProfile: {}\nFeatures: {}\nOS: {}\nArch: {}",
+                    "{} v{}\nRevision: {}\nCommit date: {}\nProfile: {}\nFeatures: {}\nOS: {}\nArch: {}",
+                    // SIPIL: nama produk di info yang disalin pengguna.
+                    if crate::sipil::HIDE_UPSTREAM_LINKS { "SipilCAD" } else { "Open CAD Studio" },
                     env!("OCS_FULL_VERSION"),
                     env!("OCS_GIT_REV"),
                     env!("OCS_COMMIT_DATE"),

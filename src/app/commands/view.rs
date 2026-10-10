@@ -59,6 +59,23 @@ fn ensure_draw_order_table(
 
 impl OpenCADStudio {
     pub(crate) fn dispatch_view(&mut self, cmd: &str, i: usize) -> Option<Task<Message>> {
+        // SIPIL: perintah yang membuka situs upstream (Patreon, GitHub, rilis, plugin) tidak
+        // melakukan apa-apa, termasuk F1 (HELP). Arm-nya sengaja dibiarkan di bawah: ada uji
+        // upstream (automation.rs) yang membaca teks sumber berkas ini.
+        if crate::sipil::HIDE_UPSTREAM_LINKS
+            && matches!(
+                cmd,
+                "DONATE"
+                    | "WEBVERSION"
+                    | "HELP"
+                    | "REPORT"
+                    | "CHANGELOG"
+                    | "PLUGINS"
+                    | "PLUGINMANAGER"
+            )
+        {
+            return Some(Task::none());
+        }
         match cmd {
             "DONATE" => {
                 self.command_line.push_info(crate::t!("Opening Patreon page...").as_ref());

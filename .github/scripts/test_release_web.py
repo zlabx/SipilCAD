@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_web as rw  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "index.trunk.html"
+LABELS_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "locale-labels.json"
 WASM = "OpenCADStudio-a106f805b3db8319_bg.wasm"
 R2 = "https://sipilcad-cdn.sipilstock.com"
 
@@ -217,11 +218,91 @@ class NoindexTests(unittest.TestCase):
             dist.mkdir()
             (dist / WASM).write_bytes(b"\0asm")
             (dist / "index.html").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+            (dist / "locale-labels.json").write_text(LABELS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
             out = run(rw.cmd_patch, dist=str(dist), metrics=str(root / "m.json"),
                       base_path="/sipilcad/", public_url=R2, prefix="sipilcad/web-v9.9.9")
             self.assertIn("::notice title=release-web::index.html: meta robots noindex sudah ada", out)
             self.assertNotIn("::warning", out)
             self.assertEqual(json.loads((root / "m.json").read_text())["noindex"], "sudah")
+
+
+class RebrandTests(unittest.TestCase):
+    def test_title_dan_splash_diganti(self):
+        html = FIXTURE.read_text(encoding="utf-8")
+        new, result = rw.rebrand_html(html)
+        self.assertEqual(result, {"title": "diganti", "splash": "diganti"})
+        self.assertIn("<title>SipilCAD Web App</title>", new)
+        self.assertIn('<div class="title">Sipil<span>CAD</span></div>', new)
+        self.assertNotIn("Open CAD Studio", re.search(r"<title>.*?</title>", new, re.S).group(0))
+        self.assertNotIn("Open <span>CAD</span> Studio", new)
+
+    def test_bagian_lain_html_tidak_berubah(self):
+        html = FIXTURE.read_text(encoding="utf-8")
+        new, _ = rw.rebrand_html(html)
+        strip = lambda t: re.sub(r"<title>.*?</title>|<div class=\"title\">.*?</div>", "", t, flags=re.S)
+        self.assertEqual(strip(html), strip(new))
+
+    def test_idempoten(self):
+        once, _ = rw.rebrand_html(FIXTURE.read_text(encoding="utf-8"))
+        twice, result = rw.rebrand_html(once)
+        self.assertEqual(twice, once)
+        self.assertEqual(result, {"title": "sudah", "splash": "sudah"})
+
+    def test_pola_berubah_dilaporkan_bukan_gagal(self):
+        new, result = rw.rebrand_html("<html><head></head><body><div>x</div></body></html>")
+        self.assertEqual(result, {"title": "tidak ditemukan", "splash": "tidak ditemukan"})
+        self.assertEqual(new, "<html><head></head><body><div>x</div></body></html>")
+
+    def test_labels_semua_locale_diganti(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locale-labels.json"
+            path.write_text(LABELS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+            before = json.loads(path.read_text(encoding="utf-8"))
+            total, changed, untouched = rw.rebrand_labels(path)
+            after = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual((total, changed, untouched), (21, 21, []))
+        for locale, entry in after.items():
+            self.assertIn("SipilCAD", entry["title"], locale)
+            self.assertNotIn("Open CAD Studio", entry["title"], locale)
+            self.assertEqual(entry["loading"], before[locale]["loading"], locale)  # kunci lain utuh
+        self.assertEqual(after["en-US"]["title"], "SipilCAD Web App")
+        self.assertIn("الويب", after["ar-SA"]["title"])  # aksara non-ASCII tidak rusak
+
+    def test_labels_tanpa_nama_upstream_dilaporkan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locale-labels.json"
+            path.write_text(json.dumps({"en-US": {"title": "Open CAD Studio", "loading": "x"},
+                                        "xx-XX": {"title": "Lain", "loading": "y"}}), encoding="utf-8")
+            self.assertEqual(rw.rebrand_labels(path), (2, 1, ["xx-XX"]))
+
+    def _patch_dist(self, root, with_labels):
+        dist = root / "dist"
+        dist.mkdir()
+        (dist / WASM).write_bytes(b"\0asm")
+        (dist / "index.html").write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+        if with_labels:
+            (dist / "locale-labels.json").write_text(LABELS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+        out = run(rw.cmd_patch, dist=str(dist), metrics=str(root / "m.json"),
+                  base_path="/sipilcad/", public_url=R2, prefix="sipilcad/web-v9.9.9")
+        return dist, out
+
+    def test_cmd_patch_lengkap_notice_dan_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dist, out = self._patch_dist(root, True)
+            self.assertIn("::notice title=release-web::branding: judul tab dan splash memakai 'SipilCAD'", out)
+            self.assertIn("21/21 judul locale diganti", out)
+            self.assertNotIn("::warning", out)
+            m = json.loads((root / "m.json").read_text())
+            self.assertEqual(m["rebrand"], {"title": "diganti", "splash": "diganti"})
+            self.assertEqual(m["rebrand_labels_changed"], 21)
+            self.assertIn("SipilCAD Web App", (dist / "index.html").read_text(encoding="utf-8"))
+
+    def test_cmd_patch_tanpa_labels_memberi_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, out = self._patch_dist(Path(tmp), False)
+            self.assertIn("::warning title=release-web::branding: pola upstream berubah?", out)
+            self.assertIn("locale-labels.json tidak ada", out)
 
 
 class PackageTests(unittest.TestCase):
