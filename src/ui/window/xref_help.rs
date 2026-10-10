@@ -35,12 +35,17 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
         )
         .into_owned(),
     );
-    let report_hint = para(
-        crate::t!(
-            "Hit something broken or missing? Report it on the GitHub issues page so it can be fixed."
+    // SIPIL: ajakan lapor ke halaman isu GitHub upstream (paragraf dan tombolnya) disembunyikan.
+    let report_hint: Element<'static, Message> = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        Space::new().into()
+    } else {
+        para(
+            crate::t!(
+                "Hit something broken or missing? Report it on the GitHub issues page so it can be fixed."
+            )
+            .into_owned(),
         )
-        .into_owned(),
-    );
+    };
 
     let report_button = dialog_button(
         crate::t!("Report an issue"),
@@ -48,14 +53,17 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
         true,
     );
     let close_button = dialog_button(crate::t!("Close"), Message::CloseModal, false);
-    let action_row: Element<'static, Message> = row![
-        Space::new().width(Fill),
-        report_button,
-        close_button,
-    ]
-    .spacing(8)
-    .align_y(iced::Center)
-    .into();
+    let action_row: Element<'static, Message> = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        row![Space::new().width(Fill), close_button]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into()
+    } else {
+        row![Space::new().width(Fill), report_button, close_button]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into()
+    };
 
     let content = column![
         text(crate::t!("Reference Manager — Web").into_owned())

@@ -328,6 +328,25 @@ pub fn view_window<'a>(
     );
     let close = dialog_button(crate::tr!("action", "close"), Message::OptionsClose, false);
 
+    // SIPIL: baris Plugins (daftar dan rilis plugin upstream) disembunyikan.
+    let plugins_row: Element<'_, Message> = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        Space::new().into()
+    } else {
+        column![
+            row![
+                text(crate::t!("Installed plugins and their sources")).size(12).width(Fill),
+                button(text(crate::t!("Plugins…")).size(11))
+                    .on_press(Message::PluginManagerOpen)
+                    .padding([4, 10])
+                    .style(button::secondary),
+            ]
+            .spacing(10)
+            .align_y(iced::Center),
+            Space::new().height(10),
+        ]
+        .into()
+    };
+
     let general = column![
         text(crate::tr!("options", "language-section")).size(15),
         Space::new().height(10),
@@ -346,16 +365,7 @@ pub fn view_window<'a>(
         Space::new().height(24),
         text(crate::t!("Applications")).size(15),
         Space::new().height(10),
-        row![
-            text(crate::t!("Installed plugins and their sources")).size(12).width(Fill),
-            button(text(crate::t!("Plugins…")).size(11))
-                .on_press(Message::PluginManagerOpen)
-                .padding([4, 10])
-                .style(button::secondary),
-        ]
-        .spacing(10)
-        .align_y(iced::Center),
-        Space::new().height(10),
+        plugins_row,
         row![
             text(crate::t!("Keyboard shortcuts")).size(12).width(Fill),
             button(text(crate::t!("Keyboard Shortcuts…")).size(11))
