@@ -1,0 +1,28 @@
+SipilCAD: lisensi komponen pihak ketiga (build web)
+====================================================
+
+Aplikasi ini menggabungkan pustaka Rust berikut ke dalam berkas WebAssembly yang Anda muat.
+Daftar ini dibuat otomatis oleh cargo-about dari Cargo.lock, hanya untuk target wasm32.
+Kode aplikasi sendiri berlisensi GPL-3.0 (lihat LICENSE.txt); kode sumbernya diuraikan di SOURCE.txt.
+Font dan komponen lain yang ikut tersaji dijelaskan di SOURCE.txt.
+
+Ringkasan
+---------
+{{#each overview}}
+{{{name}}}: {{count}} crate
+{{/each}}
+
+Rincian
+-------
+{{#each licenses}}
+
+================================================================
+{{{name}}}
+================================================================
+Dipakai oleh:
+{{#each used_by}}
+  - {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

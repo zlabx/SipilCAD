@@ -1,0 +1,33 @@
+SipilCAD (build web)
+====================
+
+Build       : @TAG@
+Commit      : @COMMIT@
+Kode sumber : https://github.com/@SOURCE_REPO@/tree/@TAG@
+Resep build : BUILD.md di commit yang sama (perintah build, versi alat, dan langkah pasca-build).
+
+Berkas WebAssembly utama (@WASM@) dilayani dari folder yang sama dengan halaman ini
+dan dibangun dari commit di atas. Versi dependensi dikunci oleh Cargo.lock pada commit tersebut.
+
+Perubahan pada hasil build (bukan pada kode sumber), oleh scripts/sipil-postbuild.py:
+- Atribut integrity dihapus dari <link rel="preload"> berkas .wasm (diabaikan peramban;
+  pemuat wasm tidak memakainya).
+- supporters.json, videos.json, dan discussions.json berisi daftar kosong, sehingga aplikasi
+  tidak memuat data atau gambar dari layanan pihak ketiga saat dibuka.
+
+Perubahan pada kode sumber terhadap Open CAD Studio dicatat di MODIFICATIONS.md pada commit yang sama.
+
+Berdasarkan Open CAD Studio oleh HakanSeven12 dan kontributor:
+https://github.com/@UPSTREAM@  (GPL-3.0), pada commit @UPSTREAM_SHA@.
+
+Lisensi: GNU General Public License v3.0 (lihat LICENSE.txt; salinan identik di LICENSE).
+Kode sumber lengkap, termasuk skrip build, tersedia di alamat di atas.
+
+Komponen pihak ketiga yang ikut tersaji:
+- Font web (folder fonts/): subset Noto Sans dan Noto Sans CJK, SIL Open Font License 1.1.
+  Teks lisensi dan pernyataan hak cipta: fonts/OFL.txt (juga tertanam di tiap berkas font).
+- Font garis LFF bawaan LibreCAD (tertanam di dalam berkas .wasm; sumbernya assets/fonts/*.lff
+  di repo kode sumber di atas). Header berkas .lff umumnya mencantumkan lisensinya: public domain
+  (font Hershey) dan/atau GPL v2 atau lebih baru.
+- Pustaka Rust yang dikompilasi ke dalam berkas .wasm: daftar dan teks lisensinya ada di
+  THIRD_PARTY_LICENSES.txt (dibuat otomatis oleh cargo-about dari Cargo.lock, target wasm32).

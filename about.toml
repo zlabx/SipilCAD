@@ -1,0 +1,32 @@
+# SIPIL: konfigurasi cargo-about untuk THIRD_PARTY_LICENSES.txt pada build web.
+# Dipanggil oleh scripts/sipil-licenses.sh; lihat BUILD.md.
+#
+# Hanya crate yang masuk ke build web (target wasm32) yang dicantumkan. Dependensi build dan uji
+# tidak ikut tersaji ke pengguna, jadi diabaikan.
+targets = ["wasm32-unknown-unknown"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Lisensi yang diterima. Lisensi baru dari dependensi hasil sinkron upstream membuat langkah ini
+# gagal dengan daftar crate-nya: periksa lisensinya, lalu tambahkan di sini bila sesuai.
+accepted = [
+    # Permisif (hampir seluruh crate pihak ketiga).
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    # Copyleft yang ditinjau (Oktober 2026): MPL-2.0 (opencadcodec, opencadkernel, opencadgraph) dan
+    # LGPL-2.1-or-later (opencadkernel-constraints) milik penulis upstream; GPL-3.0 untuk aplikasi
+    # ini dan ocs_plugin_api; OFL-1.1 untuk font yang dibundel aplikasi.
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "OFL-1.1",
+]
