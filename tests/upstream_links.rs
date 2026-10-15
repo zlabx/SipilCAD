@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Host yang sudah ditinjau (per Oktober 2026). Yang terkait upstream sudah disembunyikan atau tidak
-/// berjalan di build web (lihat README bagian "Panggilan keluar ke pihak ketiga").
+/// berjalan di build web (lihat MODIFICATIONS.md dan `HIDE_UPSTREAM_LINKS` di `src/sipil.rs`).
 const KNOWN_HOSTS: &[&str] = &[
     "127.0.0.1",
     "3dconnexion.com",
