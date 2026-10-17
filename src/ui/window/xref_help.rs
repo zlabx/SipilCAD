@@ -18,9 +18,8 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
     // Fixed window width: paragraphs wrap against this instead of the
     // toolbar, which is what made the dropdown unreadable.
     let body_w = Length::Fixed(460.0);
-    let para = |label: String| -> Element<'static, Message> {
-        text(label).size(12).width(Fill).into()
-    };
+    let para =
+        |label: String| -> Element<'static, Message> { text(label).size(12).width(Fill).into() };
 
     let intro = para(crate::t!("How the Reference Manager works on web").into_owned());
     let list = para(
@@ -66,8 +65,7 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
     };
 
     let content = column![
-        text(crate::t!("Reference Manager — Web").into_owned())
-            .size(14),
+        text(crate::t!("Reference Manager — Web").into_owned()).size(14),
         text(crate::t!("EXTERNALREFERENCES on the web build").into_owned())
             .size(11)
             .style(muted_style),
@@ -86,9 +84,7 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
         .width(sizing.width)
         .height(sizing.height)
         .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(
-                theme.palette().background.base.color,
-            )),
+            background: Some(Background::Color(theme.palette().background.base.color)),
             ..Default::default()
         })
         .into()

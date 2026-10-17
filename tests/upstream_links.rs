@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 /// Host yang sudah ditinjau (per Oktober 2026). Yang terkait upstream sudah disembunyikan atau tidak
 /// berjalan di build web (lihat MODIFICATIONS.md dan `HIDE_UPSTREAM_LINKS` di `src/sipil.rs`).
+/// `json-schema.org` dan `schemas.microsoft.com` (ditinjau untuk v2026.41) hanya string skema JSON/XML:
+/// `mcp.rs` dan `mcp_ops.rs` tidak dikompilasi untuk web, `dwf.rs` memakainya sebagai namespace XML.
 const KNOWN_HOSTS: &[&str] = &[
     "127.0.0.1",
     "3dconnexion.com",
@@ -30,10 +32,12 @@ const KNOWN_HOSTS: &[&str] = &[
     "hakanseven12.github.io",
     "i.ytimg.com",
     "intra",
+    "json-schema.org",
     "localhost",
     "open-aec.com",
     "patreon.com",
     "raw.githubusercontent.com",
+    "schemas.microsoft.com",
     "server",
     "sipilstock.com",
     "www.freedesktop.org",

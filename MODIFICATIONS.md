@@ -4,7 +4,7 @@ SipilCAD adalah turunan [Open CAD Studio](https://github.com/HakanSeven12/OpenCA
 kontributor. Dokumen ini mencatat apa yang diubah pada kode sumber, sebagaimana disyaratkan GPL-3.0
 bagian 5(a). Tanggal perubahan adalah tanggal commit build ini di riwayat git repositori.
 
-**Dasar:** `HakanSeven12/OpenCADStudio` pada commit `07f25f4bca48cc1a0a610ef00b39fdc0949d02dd`.
+**Dasar:** `HakanSeven12/OpenCADStudio` pada commit `cff240ef71b4d7d0e4832c8d260c5af7f2fe3b17`.
 
 Daftar di bawah dihitung otomatis terhadap tree upstream murni pada commit tersebut, pada setiap build.
 
@@ -31,7 +31,6 @@ Daftar di bawah dihitung otomatis terhadap tree upstream murni pada commit terse
 - `assets/logo.svg`
 - `src/app/commands/view.rs`
 - `src/app/startup.rs`
-- `src/app/update/mod.rs`
 - `src/app/view/mod.rs`
 - `src/lib.rs`
 - `src/sys.rs`
@@ -64,28 +63,27 @@ Daftar di bawah dihitung otomatis terhadap tree upstream murni pada commit terse
 ## Statistik perubahan (`git diff --stat`, tanpa `src/sipil.rs`)
 
 ```
- BUILD.md                   |  40 +++++++++++
- README.md                  | 276 +++++++++++----------------------------------------------------------------
- SOURCE.txt.in              |  33 +++++++++
+ BUILD.md                   |  40 ++++++++++++
+ README.md                  | 262 +--------------------------------------------------------------------------
+ SOURCE.txt.in              |  33 ++++++++++
  about.hbs                  |  28 ++++++++
- about.toml                 |  32 +++++++++
- assets/logo.svg            |  22 +-----
+ about.toml                 |  32 ++++++++++
+ assets/logo.svg            |  22 +------
  scripts/sipil-licenses.sh  |  30 +++++++++
- scripts/sipil-postbuild.py | 192 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ scripts/sipil-postbuild.py | 192 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
  scripts/sipil-tools.sh     |  31 +++++++++
  src/app/commands/view.rs   |  17 +++++
  src/app/startup.rs         |   6 +-
- src/app/update/mod.rs      |   4 +-
- src/app/view/mod.rs        | 160 ++++++++++++++++++++++++++++---------------
+ src/app/view/mod.rs        | 160 ++++++++++++++++++++++++++++++----------------
  src/lib.rs                 |   1 +
  src/sys.rs                 |   5 ++
- src/ui/window/about.rs     |  41 +++++++++--
- src/ui/window/options.rs   |  30 ++++++---
- src/ui/window/xref_help.rs |  34 ++++++----
- tests/upstream_links.rs    | 153 ++++++++++++++++++++++++++++++++++++++++++
- web-app.html               |   4 +-
- web/discussions.json       |  43 +-----------
- web/locale-labels.json     |  42 ++++++------
+ src/ui/window/about.rs     |  45 +++++++++++--
+ src/ui/window/options.rs   |  32 ++++++----
+ src/ui/window/xref_help.rs |  27 +++++---
+ tests/upstream_links.rs    | 157 +++++++++++++++++++++++++++++++++++++++++++++
+ web-app.html               |  67 +++++++++++++------
+ web/discussions.json       |  43 +------------
+ web/locale-labels.json     |  44 ++++++-------
  web/videos.json            |  23 +------
- 23 files changed, 820 insertions(+), 427 deletions(-)
+ 22 files changed, 832 insertions(+), 465 deletions(-)
 ```

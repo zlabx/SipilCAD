@@ -22,12 +22,36 @@ fn quad_verts(corners: &[[f32; 3]; 4], corners_low: &[[f32; 3]; 4]) -> Vec<Image
     let [p0, p1, p2, p3] = *corners;
     let [l0, l1, l2, l3] = *corners_low;
     vec![
-        ImageQuadVertex { pos: p0, uv: [0.0, 1.0], pos_low: l0 },
-        ImageQuadVertex { pos: p1, uv: [1.0, 1.0], pos_low: l1 },
-        ImageQuadVertex { pos: p2, uv: [1.0, 0.0], pos_low: l2 },
-        ImageQuadVertex { pos: p0, uv: [0.0, 1.0], pos_low: l0 },
-        ImageQuadVertex { pos: p2, uv: [1.0, 0.0], pos_low: l2 },
-        ImageQuadVertex { pos: p3, uv: [0.0, 0.0], pos_low: l3 },
+        ImageQuadVertex {
+            pos: p0,
+            uv: [0.0, 1.0],
+            pos_low: l0,
+        },
+        ImageQuadVertex {
+            pos: p1,
+            uv: [1.0, 1.0],
+            pos_low: l1,
+        },
+        ImageQuadVertex {
+            pos: p2,
+            uv: [1.0, 0.0],
+            pos_low: l2,
+        },
+        ImageQuadVertex {
+            pos: p0,
+            uv: [0.0, 1.0],
+            pos_low: l0,
+        },
+        ImageQuadVertex {
+            pos: p2,
+            uv: [1.0, 0.0],
+            pos_low: l2,
+        },
+        ImageQuadVertex {
+            pos: p3,
+            uv: [0.0, 0.0],
+            pos_low: l3,
+        },
     ]
 }
 
@@ -39,12 +63,7 @@ fn clip_triangles_px(img: &codec::entities::RasterImage) -> Vec<[f64; 2]> {
     use codec::entities::ClipMode;
     let w = img.size.x;
     let h = img.size.y;
-    let quad = || {
-        vec![
-            [0.0, 0.0], [w, 0.0], [w, h],
-            [0.0, 0.0], [w, h], [0.0, h],
-        ]
-    };
+    let quad = || vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, 0.0], [w, h], [0.0, h]];
     let Some(poly) = crate::entities::raster_image::image_clip_polygon(img) else {
         return quad();
     };
@@ -54,7 +73,10 @@ fn clip_triangles_px(img: &codec::entities::RasterImage) -> Vec<[f64; 2]> {
     } else {
         kernel::geom2d::triangulate(&poly, &[])
     };
-    let tris: Vec<[f64; 2]> = triangles.into_iter().flat_map(|t| t.map(|i| points[i])).collect();
+    let tris: Vec<[f64; 2]> = triangles
+        .into_iter()
+        .flat_map(|t| t.map(|i| points[i]))
+        .collect();
     if tris.is_empty() {
         quad()
     } else {
@@ -99,12 +121,67 @@ pub struct ImageModel {
     pub use_alpha: bool,
 }
 
+/// The colour adjustments an underlay's content is drawn with over
+/// the background: contrast, monochrome, the background adjustment and (DGN)
+/// the fade.
+pub(crate) fn underlay_adjust(
+    u: &codec::entities::Underlay,
+    def: &codec::entities::UnderlayDefinition,
+    background: [f32; 4],
+) -> super::pdf_raster::PageAdjust {
+    use super::pdf_raster::PageAdjust;
+    use codec::entities::{UnderlayDisplayFlags, UnderlayType};
+    let page = crate::entities::underlay::page_of(def);
+    // Dark means an HSL lightness under one half: pure blue counts as
+    // light, (0, 128, 0) as dark.
+    let bg_max = background[0].max(background[1]).max(background[2]);
+    let bg_min = background[0].min(background[1]).min(background[2]);
+    let bg_lum = (bg_max + bg_min) / 2.0;
+    let dgn = def.underlay_type == UnderlayType::Dgn;
+    // A DGN model is faded into the background before its contrast is
+    // applied (the reference's order), so it is drawn opaque.
+    let bg_rgb = [0, 1, 2].map(|i| (background[i].clamp(0.0, 1.0) * 255.0).round() as u8);
+    let fade_before_contrast = (dgn && u.fade > 0).then_some((bg_rgb, u.fade.min(100)));
+    PageAdjust {
+        contrast: u.contrast.min(100),
+        // Measured: PDF 0.5; DWF 0.243, or 0.73 once its colours are
+        // turned over for a dark background; a DGN model's from its
+        // own colours, over any background.
+        contrast_pivot: match def.underlay_type {
+            UnderlayType::Pdf => 500,
+            UnderlayType::Dwf
+                if u.flags
+                    .contains(UnderlayDisplayFlags::ADJUST_FOR_BACKGROUND)
+                    && bg_lum < 0.5 =>
+            {
+                730
+            }
+            UnderlayType::Dwf => 243,
+            UnderlayType::Dgn => super::underlay_vector::dgn_contrast_pivot(
+                &def.file_path,
+                page,
+                &super::pdf_layers::hidden_layers(u),
+                super::underlay_vector::Backdrop::of([background[0], background[1], background[2]]),
+                fade_before_contrast,
+            )
+            .unwrap_or(404),
+        },
+        monochrome: u.flags.contains(UnderlayDisplayFlags::MONOCHROME),
+        // A DGN model's colours follow the background through its
+        // colour table, whatever this setting.
+        adjust_for_background: u
+            .flags
+            .contains(UnderlayDisplayFlags::ADJUST_FOR_BACKGROUND)
+            && !dgn,
+        dark_background: bg_lum < 0.5,
+        fade_before_contrast,
+    }
+}
+
 impl ImageModel {
     /// Build an ImageModel from a DXF RasterImage entity.
     /// Returns `None` if the image file cannot be opened or decoded.
-    pub fn from_raster_image(
-        img: &codec::entities::RasterImage,
-    ) -> Option<Self> {
+    pub fn from_raster_image(img: &codec::entities::RasterImage) -> Option<Self> {
         let w = img.size.x;
         let h = img.size.y;
         // Model-space geometry is drawn in (WCS - world_offset) so large UTM-
@@ -148,7 +225,11 @@ impl ImageModel {
                 let fu = (px / w) as f32;
                 let fv = (py / h) as f32;
                 ImageQuadVertex {
-                    pos: [ox + ux * fu + vx * fv, oy + uy * fu + vy * fv, oz + uz * fu + vz * fv],
+                    pos: [
+                        ox + ux * fu + vx * fv,
+                        oy + uy * fu + vy * fv,
+                        oz + uz * fu + vz * fv,
+                    ],
                     uv: [fu, 1.0 - fv],
                     pos_low: [oxl, oyl, ozl],
                 }
@@ -196,8 +277,8 @@ impl ImageModel {
         background: [f32; 4],
         world_per_pixel: Option<f64>,
     ) -> Option<Self> {
+        use super::pdf_raster;
         use codec::entities::{UnderlayDisplayFlags, UnderlayType};
-        use super::pdf_raster::{self, PageAdjust};
         if !u.flags.contains(UnderlayDisplayFlags::ON) {
             return None;
         }
@@ -209,75 +290,39 @@ impl ImageModel {
         // The page's longest side on screen, pixels (the view scale is taken
         // a step coarser, so the raster is never reduced on screen and its
         // one-pixel lines stay unbroken).
-        let screen_side = world_per_pixel
-            .filter(|wpp| *wpp > 0.0)
-            .map(|wpp| {
-                let w = (rect[2] - rect[0]) * u.x_scale.abs();
-                let h = (rect[3] - rect[1]) * u.y_scale.abs();
-                w.max(h) / wpp
-            });
+        let screen_side = world_per_pixel.filter(|wpp| *wpp > 0.0).map(|wpp| {
+            let w = (rect[2] - rect[0]) * u.x_scale.abs();
+            let h = (rect[3] - rect[1]) * u.y_scale.abs();
+            w.max(h) / wpp
+        });
         let (source, raster) = match def.underlay_type {
             UnderlayType::Pdf => {
                 // Hidden PDF layers come from the underlay's layer overrides.
                 let source = super::pdf_layers::underlay_source(u, &def.file_path);
                 let inches = (rect[2] - rect[0]).max(rect[3] - rect[1]);
                 let raster = match screen_side {
-                    Some(side) if inches > 0.0 && side / inches < pdf_raster::DISPLAY_DPI as f64 => {
-                        pdf_raster::rasterize_page_display_at(&source, page, (side / inches).max(8.0) as f32)?
+                    Some(side)
+                        if inches > 0.0 && side / inches < pdf_raster::DISPLAY_DPI as f64 =>
+                    {
+                        pdf_raster::rasterize_page_display_at(
+                            &source,
+                            page,
+                            (side / inches).max(8.0) as f32,
+                        )?
                     }
                     _ => pdf_raster::rasterize_page_display(&source, page)?,
                 };
                 (source, raster)
             }
-            kind => {
-                let hidden = super::pdf_layers::hidden_layers(u);
-                // The adjusted-pixel memo keys on the source: one per set of
-                // hidden layers.
-                let source = if hidden.is_empty() {
-                    def.file_path.clone()
-                } else {
-                    format!("{}#{}", def.file_path, hidden.join("|"))
-                };
-                let raster = super::underlay_vector::display_raster(
-                    kind,
-                    &def.file_path,
-                    page,
-                    &hidden,
-                    screen_side.unwrap_or(super::underlay_vector::RASTER_SIDE),
-                )?;
-                (source, raster)
-            }
+            // DWF sheets and DGN models are drawn as vector wires
+            // (`underlay_vector::display_wires`).
+            _ => return None,
         };
-        // Dark means an HSL lightness under one half: pure blue counts as
-        // light, (0, 128, 0) as dark.
-        let bg_max = background[0].max(background[1]).max(background[2]);
-        let bg_min = background[0].min(background[1]).min(background[2]);
-        let bg_lum = (bg_max + bg_min) / 2.0;
         let pixels = pdf_raster::adjusted_pixels(
             &source,
             page,
             &raster,
-            PageAdjust {
-                contrast: u.contrast.min(100),
-                // Measured: PDF 0.5; DWF 0.243, or 0.73 once its colours are
-                // turned over for a dark background; DGN 0.65.
-                contrast_pivot: match def.underlay_type {
-                    UnderlayType::Pdf => 500,
-                    UnderlayType::Dwf
-                        if u.flags.contains(UnderlayDisplayFlags::ADJUST_FOR_BACKGROUND) && bg_lum < 0.5 =>
-                    {
-                        730
-                    }
-                    UnderlayType::Dwf => 243,
-                    UnderlayType::Dgn => 650,
-                },
-                monochrome: u.flags.contains(UnderlayDisplayFlags::MONOCHROME),
-                adjust_for_background: u.flags.contains(UnderlayDisplayFlags::ADJUST_FOR_BACKGROUND),
-                // A DGN model is drawn for a black background, so its
-                // colours turn over on a light one instead (white text stays
-                // light on a dark background, as the reference shows it).
-                dark_background: (bg_lum < 0.5) != (def.underlay_type == UnderlayType::Dgn),
-            },
+            underlay_adjust(u, def, background),
         );
 
         // The page rectangle in drawing units (1 unit per PDF inch, or per
@@ -347,7 +392,16 @@ fn underlay_visible_uv(u: &codec::entities::Underlay, rect: [f64; 4]) -> Vec<[f6
     let (page_w, page_h) = (rect[2] - rect[0], rect[3] - rect[1]);
     use codec::entities::UnderlayDisplayFlags;
     let page = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-    let whole = || vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let whole = || {
+        vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ]
+    };
     let clip = crate::entities::underlay::clip_polygon_local(u);
     if !u.flags.contains(UnderlayDisplayFlags::CLIPPING) || clip.len() < 3 {
         return whole();

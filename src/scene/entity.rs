@@ -143,6 +143,7 @@ impl Scene {
     /// layer 0. Auto-registering keeps it on its own layer (#252). Names are
     /// registered verbatim so the writer's (case-insensitive) lookup matches;
     /// the always-present default layer "0" and empty names are no-ops.
+    /// Flags `layer_table_dirty` so the app refreshes its layer lists.
     pub fn ensure_layer(&mut self, name: &str) {
         if name.trim().is_empty() || self.document.layers.contains(name) {
             return;
@@ -150,6 +151,8 @@ impl Scene {
         let mut layer = codec::tables::Layer::new(name);
         layer.handle = self.document.allocate_handle();
         let _ = self.document.layers.add(layer);
+        self.invalidate_layer_dependencies(&[name.to_string()]);
+        self.layer_table_dirty = true;
     }
 
     pub(crate) fn ensure_app_id(&mut self, name: &str) {
@@ -319,7 +322,8 @@ impl Scene {
         let facet_res = self.document.header.facet_resolution;
         let chordal_deflection =
             crate::entities::solid3d::display_deflection(&self.document.header, facet_res);
-        let isolines = self.document.header.isolines.max(0) as usize;
+        let isolines =
+            crate::entities::solid3d::clamp_header_isolines(self.document.header.isolines);
         let mesh_seed = if matches!(
             &entity,
             EntityType::Solid3D(_)
@@ -603,7 +607,8 @@ impl Scene {
         let facet_res = self.document.header.facet_resolution;
         let chordal_deflection =
             crate::entities::solid3d::display_deflection(&self.document.header, facet_res);
-        let isolines = self.document.header.isolines.max(0) as usize;
+        let isolines =
+            crate::entities::solid3d::clamp_header_isolines(self.document.header.isolines);
         let mesh_seed = if matches!(
             &entity,
             EntityType::Solid3D(_)
@@ -753,11 +758,12 @@ impl Scene {
             .iter()
             .filter(|handle| !self.solid_models.contains_key(handle))
             .filter_map(|&handle| {
-                let from_history = self
-                    .document
-                    .solid_history_operations(handle)
-                    .and_then(|operations| kernel::acis::rebuild_history(&operations).ok());
-                let body = from_history.or_else(|| match self.document.get_entity(handle) {
+                let tree = self.document.solid_history_tree(handle);
+                let rebuilt = || {
+                    tree.as_ref()
+                        .and_then(|tree| kernel::acis::rebuild_history_tree(tree).ok())
+                };
+                let stored = || match self.document.get_entity(handle) {
                     Some(EntityType::Solid3D(solid)) => {
                         crate::scene::convert::solid3d_tess::kernel_body(solid)
                     }
@@ -768,7 +774,14 @@ impl Scene {
                         crate::scene::convert::solid3d_tess::kernel_surface_body(surface)
                     }
                     _ => None,
-                })?;
+                };
+                // A composite's saved body is what its booleans produced;
+                // replaying them is for edits, not for reading the file.
+                let body = if tree.as_ref().is_some_and(|tree| tree.has_boolean()) {
+                    stored().or_else(rebuilt)
+                } else {
+                    rebuilt().or_else(stored)
+                }?;
                 Some((handle, body))
             })
             .collect();
@@ -832,7 +845,8 @@ impl Scene {
         let facet_res = self.document.header.facet_resolution;
         let chordal_deflection =
             crate::entities::solid3d::display_deflection(&self.document.header, facet_res);
-        let isolines = self.document.header.isolines.max(0) as usize;
+        let isolines =
+            crate::entities::solid3d::clamp_header_isolines(self.document.header.isolines);
         use crate::par::prelude::*;
         let built: Vec<(Handle, MeshLodSet, bool)> = entries
             .into_par_iter()
@@ -1234,6 +1248,46 @@ impl Scene {
         self.bump_geometry();
     }
 
+    /// Replace the contents and base point of block `name`, defining it when
+    /// absent. References keep pointing at it and show the new contents.
+    pub fn redefine_block_raw(
+        &mut self,
+        name: &str,
+        base_point: codec::types::Vector3,
+        entities: Vec<EntityType>,
+    ) {
+        let Some((br_handle, block_handle)) = self
+            .document
+            .block_records
+            .get(name)
+            .map(|br| (br.handle, br.block_entity_handle))
+        else {
+            return self.define_block_raw(name, base_point, entities);
+        };
+        let owned: Vec<Handle> = self
+            .document
+            .entities()
+            .filter(|e| {
+                e.common().owner_handle == br_handle
+                    && !matches!(e, EntityType::Block(_) | EntityType::BlockEnd(_))
+            })
+            .map(|e| e.common().handle)
+            .collect();
+        for h in owned {
+            self.document.remove_entity(h);
+        }
+        if let Some(EntityType::Block(block)) = self.document.get_entity_mut(block_handle) {
+            block.base_point = base_point;
+        }
+        for mut entity in entities {
+            Self::reset_clone_subhandles(&mut self.document, &mut entity);
+            entity.common_mut().handle = Handle::NULL;
+            entity.common_mut().owner_handle = br_handle;
+            let _ = self.document.add_entity(entity);
+        }
+        self.bump_geometry();
+    }
+
     pub(super) fn synced_hatch_models(
         &self,
         target_block: Handle,
@@ -1407,6 +1461,10 @@ impl Scene {
                             | model::hatch_model::HatchPattern::Solid => {}
                         }
                     }
+                }
+                m.color = self.count_color(handle, m.color, self.current_bg());
+                if let Some(b) = &mut backdrop {
+                    b.color = self.count_color(handle, b.color, self.current_bg());
                 }
                 if tint_selected && self.selected.contains(&handle) {
                     m.color = [0.15, 0.55, 1.00, m.color[3]];
@@ -1709,6 +1767,7 @@ impl Scene {
                         )
                     });
                 }
+                model.color = self.count_color(context.root_handle, model.color, hatch_bg);
                 if tint_selected && self.selected.contains(&context.root_handle) {
                     model.color = [0.15, 0.55, 1.00, model.color[3]];
                 }
@@ -1911,9 +1970,7 @@ impl Scene {
     /// Compute the 2D (XY) boundary polygon for a Wipeout entity.
     /// Wipeout fill boundary as small f32 offsets from the returned world_origin
     /// (the insertion point, kept in f64).
-    pub(super) fn wipeout_boundary_2d(
-        wo: &codec::entities::Wipeout,
-    ) -> ([f64; 2], Vec<[f32; 2]>) {
+    pub(super) fn wipeout_boundary_2d(wo: &codec::entities::Wipeout) -> ([f64; 2], Vec<[f32; 2]>) {
         let origin = [wo.insertion_point.x, wo.insertion_point.y];
         let plane = kernel::space::Plane::from_axes(
             [
@@ -2103,9 +2160,11 @@ impl Scene {
             let range = boundary.len()..boundary.len() + ring.len();
             boundary.extend(ring);
             local_boundary.extend(local_ring.iter().map(|&[x, y]| [x as f32, y as f32]));
-            if path.edges.iter().any(|edge| {
-                matches!(edge, codec::entities::BoundaryEdge::Spline(_))
-            }) {
+            if path
+                .edges
+                .iter()
+                .any(|edge| matches!(edge, codec::entities::BoundaryEdge::Spline(_)))
+            {
                 spline_paths.push((path, local_ring, range));
             }
             boundary_exterior.push(depth == 0);
@@ -2311,21 +2370,30 @@ impl Scene {
         }
         let project = |point: [f64; 2]| {
             let [x, y] = to_xy(point[0], point[1]);
-            [(x - world_origin[0]) as f32 as f64, (y - world_origin[1]) as f32 as f64]
+            [
+                (x - world_origin[0]) as f32 as f64,
+                (y - world_origin[1]) as f32 as f64,
+            ]
         };
         for (path, ring, range) in spline_paths.into_iter().rev() {
             if range.end > boundary.len() {
                 continue;
             }
-            let curves = || path.edges.iter().filter_map(crate::entities::hatch::edge_curve).collect();
-            if let Some(refined) =
-                kernel::geom2d::refine_spline_boundary(&ring, curves, &project)
-            {
+            let curves = || {
+                path.edges
+                    .iter()
+                    .filter_map(crate::entities::hatch::edge_curve)
+                    .collect()
+            };
+            if let Some(refined) = kernel::geom2d::refine_spline_boundary(&ring, curves, &project) {
                 if boundary.len() - range.len() + refined.len() > MAX_HATCH_MODEL_VERTS {
                     continue;
                 }
                 boundary.splice(range.clone(), refined.iter().map(|p| to_xy(p[0], p[1])));
-                local_boundary.splice(range, refined.into_iter().map(|[x, y]| [x as f32, y as f32]));
+                local_boundary.splice(
+                    range,
+                    refined.into_iter().map(|[x, y]| [x as f32, y as f32]),
+                );
             }
         }
 
@@ -2492,7 +2560,8 @@ impl Scene {
                 Some(codec::objects::ObjectType::UnderlayDefinition(def)) => {
                     // A paper-space underlay adjusts to the sheet, not the canvas.
                     let owner = u.common.owner_handle;
-                    let background = if owner.is_null() || owner == self.model_space_block_handle() {
+                    let background = if owner.is_null() || owner == self.model_space_block_handle()
+                    {
                         self.bg_color
                     } else {
                         self.paper_bg_color
@@ -2527,6 +2596,10 @@ impl Scene {
         if !incremental {
             self.meshes.clear();
             self.block_meshes.clear();
+            // The B-rep cache follows the entities too: an undo that rebuilds
+            // everything left the undone fillet's body here, and the next
+            // edge operation brought it back (#1107). Restored on demand.
+            self.solid_models.clear();
         }
         // BLOCK-entity handles of the layout (model + paper) blocks. A solid
         // owned by one of these is top-level; anything else lives in a block
@@ -2578,7 +2651,8 @@ impl Scene {
         let facet_res = self.document.header.facet_resolution;
         let chordal_deflection =
             crate::entities::solid3d::display_deflection(&self.document.header, facet_res);
-        let isolines = self.document.header.isolines.max(0) as usize;
+        let isolines =
+            crate::entities::solid3d::clamp_header_isolines(self.document.header.isolines);
         // Top-level solids: offset into the render frame, drawn flat.
         // Block-definition solids: keep block-local coords for per-INSERT
         // instancing (no offset applied here).
