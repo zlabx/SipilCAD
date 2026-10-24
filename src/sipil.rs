@@ -15,6 +15,9 @@ pub const HIDE_UPSTREAM_LINKS: bool = true;
 /// (mis. /sipilcad/ maupun /sipilcad-next/) dan tidak pernah menaut ke situs lain.
 pub const LICENSE_PATH: &str = "LICENSE.txt";
 pub const SOURCE_PATH: &str = "SOURCE.txt";
+/// Teks lisensi font PT Sans (SIL OFL 1.1): splash web dan huruf label ikon. Berkas ini disalin ke samping index.html
+/// oleh `<link data-trunk rel="copy-file" href="web/pt-sans/OFL-PTSans.txt">` di web-app.html (patch 0009).
+pub const FONT_PATH: &str = "OFL-PTSans.txt";
 
 /// Potongan URL (huruf kecil) milik proyek upstream. Cukup mencocokkan substring: pola dipilih
 /// agar tidak mengenai domain kita atau hyperlink yang tertanam di gambar milik pengguna.
@@ -74,6 +77,7 @@ mod tests {
         for url in [
             LICENSE_PATH,
             SOURCE_PATH,
+            FONT_PATH,
             "https://sipilstock.com/sipilcad/",
             "https://sipilstock.com/sipilcad-next/",
             "https://example.com/spesifikasi.pdf",
@@ -93,7 +97,7 @@ mod tests {
     #[test]
     fn paths_point_at_the_served_documents() {
         // Relatif (tanpa skema dan tanpa "/" di depan) dan berupa berkas teks di samping index.html.
-        for path in [LICENSE_PATH, SOURCE_PATH] {
+        for path in [LICENSE_PATH, SOURCE_PATH, FONT_PATH] {
             assert!(!path.starts_with('/') && !path.contains("://"), "harus relatif: {path}");
             assert!(path.ends_with(".txt") && !path.contains('/'), "harus berkas .txt di folder yang sama: {path}");
         }

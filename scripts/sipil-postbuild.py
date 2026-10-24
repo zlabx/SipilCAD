@@ -32,7 +32,8 @@ CONTENT_ATTR_RE = re.compile(r"""\bcontent\s*=\s*(["'])(.*?)\1""", re.IGNORECASE
 NOINDEX_RE = re.compile(r"\b(?:noindex|none)\b", re.IGNORECASE)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-SPLASH_OK_RE = re.compile(r"""class=(["'])title\1\s*>\s*Sipil\s*<span>CAD</span>""", re.IGNORECASE)
+# The splash shows the product name in its own element (patch 0009): <div class="splash-product">SipilCAD</div>.
+SPLASH_OK_RE = re.compile(r"""class=(["'])splash-product\1\s*>\s*Sipil\s*CAD\s*</div>""", re.IGNORECASE)
 
 
 def fail(msg):
@@ -106,7 +107,7 @@ def check_branding(index_text, labels_path):
     if not t or UPSTREAM_NAME in t.group(1):
         fail(f"<title> masih memuat '{UPSTREAM_NAME}' atau tidak ada; patch 0008 tidak terpasang?")
     if not SPLASH_OK_RE.search(index_text):
-        fail("teks splash bukan 'Sipil<span>CAD</span>'; patch 0008 tidak terpasang atau templat upstream berubah?")
+        fail("teks splash bukan 'SipilCAD' (elemen splash-product); patch 0008/0009 tidak terpasang atau templat upstream berubah?")
     if not Path(labels_path).exists():
         fail("locale-labels.json tidak ada di hasil build")
     labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))

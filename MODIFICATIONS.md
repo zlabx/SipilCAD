@@ -1,89 +1,56 @@
-# Modifikasi terhadap Open CAD Studio
+# Modifications
 
-SipilCAD adalah turunan [Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio) (GPL-3.0) oleh HakanSeven12 dan
-kontributor. Dokumen ini mencatat apa yang diubah pada kode sumber, sebagaimana disyaratkan GPL-3.0
-bagian 5(a). Tanggal perubahan adalah tanggal commit build ini di riwayat git repositori.
+SipilCAD is derived from Open CAD Studio (https://github.com/HakanSeven12/OpenCADStudio),
+GPL-3.0. Changes made by the rebrand overlay (GPL-3.0 section 5(a)):
 
-**Dasar:** `HakanSeven12/OpenCADStudio` pada commit `cff240ef71b4d7d0e4832c8d260c5af7f2fe3b17`.
+- Product name and identity: the tab title, loading screen, About dialog, copied info text and the locale titles in
+  `web/locale-labels.json` use the name SipilCAD; the logo is replaced by the SipilStock icon (the favicon uses the
+  label-free variant) and the loading screen is set in PT Sans (OFL, unmodified files in `web/pt-sans/`).
+- Links to the upstream project are hidden or blocked (website, Patreon, GitHub, Reddit, open-aec, YouTube): start page
+  buttons and panels, the donation prompt at start-up, the Plugins row in Options, the commands that open upstream sites
+  (DONATE, HELP/F1, REPORT, CHANGELOG, PLUGINS, ...), and an `open_url` safety net for new upstream links. All of it sits
+  behind one flag, `HIDE_UPSTREAM_LINKS` in `src/sipil.rs`; every changed spot is marked `// SIPIL:` (`git grep "SIPIL:"`).
+- Attribution and licence: the About dialog links License, Font (the PT Sans licence) and Source (`LICENSE.txt`,
+  `OFL-PTSans.txt` and `SOURCE.txt`, served next to the app). Upstream's `LICENSE` and copyright headers are unchanged.
+- Upstream data emptied: `web/videos.json` and `web/discussions.json` hold empty lists; `supporters.json` is emptied at
+  build time (`scripts/sipil-postbuild.py`).
+- Guard: `tests/upstream_links.rs` fails when upstream adds a host or an `open_url` call site (its limit counts the
+  About "Font" button).
+- Added for the build: `about.toml` and `about.hbs` (THIRD_PARTY_LICENSES.txt), `scripts/sipil-*`, `SOURCE.txt.in`,
+  `BUILD.md` and a new `README.md`.
+- Upstream's CI and release workflows (`.github/`) are not carried in this repository; SipilCAD is built with its
+  own pipeline (see `BUILD.md`).
+- Based on HakanSeven12/OpenCADStudio commit `cff240ef71b4d7d0e4832c8d260c5af7f2fe3b17`.
 
-Daftar di bawah dihitung otomatis terhadap tree upstream murni pada commit tersebut, pada setiap build.
+Additional changes applied by the build after those substitutions:
 
-## Ringkasan perubahan
+- modified: `src/app/commands/view.rs`
+- modified: `src/app/startup.rs`
+- modified: `src/app/view/mod.rs`
+- modified: `src/lib.rs`
+- modified: `src/sys.rs`
+- modified: `src/ui/window/about.rs`
+- modified: `src/ui/window/options.rs`
+- modified: `src/ui/window/xref_help.rs`
+- modified: `web-app.html`
+- modified: `web/locale-labels.json`
+- added or replaced: `BUILD.md`
+- added or replaced: `README.md`
+- added or replaced: `SOURCE.txt.in`
+- added or replaced: `about.hbs`
+- added or replaced: `about.toml`
+- added or replaced: `assets/LOGO.md`
+- added or replaced: `assets/logo-small.svg`
+- added or replaced: `assets/logo.svg`
+- added or replaced: `scripts/sipil-licenses.sh`
+- added or replaced: `scripts/sipil-postbuild.py`
+- added or replaced: `scripts/sipil-tools.sh`
+- added or replaced: `src/sipil.rs`
+- added or replaced: `tests/upstream_links.rs`
+- added or replaced: `web/discussions.json`
+- added or replaced: `web/pt-sans/OFL-PTSans.txt`
+- added or replaced: `web/pt-sans/PT_Sans-Web-Bold.ttf`
+- added or replaced: `web/pt-sans/PT_Sans-Web-Regular.ttf`
+- added or replaced: `web/videos.json`
 
-- **Nama dan identitas:** judul tab, layar pemuatan, dialog About, dan teks info yang disalin memakai nama
-  SipilCAD; logo diganti.
-- **Tautan ke proyek upstream disembunyikan atau diblokir** (situs, Patreon, GitHub, Reddit, open-aec,
-  YouTube): tombol dan panel di Start page, dialog donasi saat start, baris Plugins di Options, perintah
-  yang membuka situs upstream (DONATE, HELP/F1, REPORT, CHANGELOG, PLUGINS, dst.), dan jaring pengaman
-  `open_url` untuk tautan upstream baru. Semuanya di balik satu flag, `HIDE_UPSTREAM_LINKS` di
-  `src/sipil.rs`; setiap titik ubah bertanda `// SIPIL:` (`git grep "SIPIL:"`).
-- **Atribusi dan lisensi:** dialog About menampilkan tautan License dan Source (berkas `LICENSE.txt` dan
-  `SOURCE.txt` yang disajikan di samping aplikasi). `LICENSE` upstream dan header hak cipta tidak diubah.
-- **Data upstream dikosongkan:** `web/videos.json` dan `web/discussions.json` berisi daftar kosong;
-  `supporters.json` dikosongkan saat build (`scripts/sipil-postbuild.py`).
-- **Penjaga sinkron:** `tests/upstream_links.rs` gagal bila upstream menambah host atau titik pemanggil
-  `open_url` baru.
-- **Tambahan build:** `about.toml` dan `about.hbs` (THIRD_PARTY_LICENSES.txt), `scripts/sipil-*`,
-  `SOURCE.txt.in`, `BUILD.md`, dan `README.md` yang baru.
-
-## Berkas yang diubah
-- `README.md`
-- `assets/logo.svg`
-- `src/app/commands/view.rs`
-- `src/app/startup.rs`
-- `src/app/view/mod.rs`
-- `src/lib.rs`
-- `src/sys.rs`
-- `src/ui/window/about.rs`
-- `src/ui/window/options.rs`
-- `src/ui/window/xref_help.rs`
-- `web-app.html`
-- `web/discussions.json`
-- `web/locale-labels.json`
-- `web/videos.json`
-
-## Berkas yang ditambah
-- `BUILD.md`
-- `SOURCE.txt.in`
-- `about.hbs`
-- `about.toml`
-- `scripts/sipil-licenses.sh`
-- `scripts/sipil-postbuild.py`
-- `scripts/sipil-tools.sh`
-- `src/sipil.rs`
-- `tests/upstream_links.rs`
-
-## Berkas upstream yang dihapus
-- (tidak ada)
-
-## Berkas upstream yang tidak disertakan di repositori ini
-- `.github/`
-(workflow CI/rilis upstream; build SipilCAD memakai alur sendiri, lihat `BUILD.md`)
-
-## Statistik perubahan (`git diff --stat`, tanpa `src/sipil.rs`)
-
-```
- BUILD.md                   |  40 ++++++++++++
- README.md                  | 262 +--------------------------------------------------------------------------
- SOURCE.txt.in              |  33 ++++++++++
- about.hbs                  |  28 ++++++++
- about.toml                 |  32 ++++++++++
- assets/logo.svg            |  22 +------
- scripts/sipil-licenses.sh  |  30 +++++++++
- scripts/sipil-postbuild.py | 192 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
- scripts/sipil-tools.sh     |  31 +++++++++
- src/app/commands/view.rs   |  17 +++++
- src/app/startup.rs         |   6 +-
- src/app/view/mod.rs        | 160 ++++++++++++++++++++++++++++++----------------
- src/lib.rs                 |   1 +
- src/sys.rs                 |   5 ++
- src/ui/window/about.rs     |  45 +++++++++++--
- src/ui/window/options.rs   |  32 ++++++----
- src/ui/window/xref_help.rs |  27 +++++---
- tests/upstream_links.rs    | 157 +++++++++++++++++++++++++++++++++++++++++++++
- web-app.html               |  67 +++++++++++++------
- web/discussions.json       |  43 +------------
- web/locale-labels.json     |  44 ++++++-------
- web/videos.json            |  23 +------
- 22 files changed, 832 insertions(+), 465 deletions(-)
-```
+The date of these changes is the date of this build's commit in the git history of this repository.

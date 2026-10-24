@@ -6,8 +6,13 @@
     <meta name="robots" content="noindex, follow" />
     <meta name="theme-color" content="#1e1e1e" />
     <title>SipilCAD Web App</title>
-    <link data-trunk rel="icon" href="assets/logo.svg" />
+    <link data-trunk rel="icon" href="assets/logo-small.svg" />
     <style>
+      /* PT Sans (ParaType, SIL OFL 1.1; licence text: OFL-PTSans.txt), used unmodified for the splash only. */
+      @font-face { font-family: "PT Sans"; font-weight: 400; font-style: normal; font-display: block;
+        src: url("fonts/PT_Sans-Web-Regular.ttf") format("truetype"); }
+      @font-face { font-family: "PT Sans"; font-weight: 700; font-style: normal; font-display: block;
+        src: url("fonts/PT_Sans-Web-Bold.ttf") format("truetype"); }
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
       canvas { display: block; }
       /* Splash: jendela berwarna di tengah, kira-kira 30% lebar dan tinggi layar. Isinya berukuran
@@ -34,9 +39,9 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: #0E8E9A;
+        background: #7B2DE5;
         color: #fff;
-        font: 16px "Segoe UI", system-ui, -apple-system, sans-serif;
+        font: 16px "PT Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
       }
       #loading .brand {
@@ -47,23 +52,30 @@
         align-items: center;
         gap: 3cqmin;
         font-size: 7cqmin;
-        font-weight: 600;
+        font-weight: 700;
         letter-spacing: 0.2px;
       }
       #loading .brand svg { width: 10.5cqmin; height: 10.5cqmin; display: block; }
-      #loading .splash-title { text-align: center; margin-top: -1cqmin; }
-      #loading .splash-word { font-size: 30cqmin; font-weight: 300; line-height: 1; }
-      #loading .title { margin-top: 4cqmin; font-size: 7.5cqmin; font-weight: 600; letter-spacing: 0; }
+      #loading .splash-title { text-align: center; }
+      #loading .splash-product { font-size: 19cqmin; font-weight: 700; line-height: 1.1; letter-spacing: 0.01em; }
+      #loading .splash-year { margin-top: 4cqmin; font-size: 8.5cqmin; font-weight: 400; line-height: 1; letter-spacing: 0.2em; }
       #loading .sub {
         position: absolute;
         bottom: 7cqmin;
         inset-inline-start: 8cqmin;
         font-size: 5.5cqmin;
+        font-weight: 400;
         animation: ocs-pulse 1.4s ease-in-out infinite;
       }
       @keyframes ocs-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
       @media (prefers-reduced-motion: reduce) { #loading .sub { animation: none; } }
     </style>
+    <!-- PT Sans for the splash (web/pt-sans, from the rebrand kit): the fonts go to fonts/, the licence text next to this page. -->
+    <link data-trunk rel="copy-file" href="web/pt-sans/PT_Sans-Web-Regular.ttf" data-target-path="fonts" />
+    <link data-trunk rel="copy-file" href="web/pt-sans/PT_Sans-Web-Bold.ttf" data-target-path="fonts" />
+    <link data-trunk rel="copy-file" href="web/pt-sans/OFL-PTSans.txt" />
+    <link rel="preload" href="fonts/PT_Sans-Web-Bold.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="fonts/PT_Sans-Web-Regular.ttf" as="font" type="font/ttf" crossorigin />
     <link data-trunk rel="rust" data-bin="OpenCADStudio" />
     <link data-trunk rel="copy-dir" href="web/fonts" />
     <link data-trunk rel="copy-file" href="web/ocs-parse-worker.js" />
@@ -76,8 +88,8 @@
       <div class="splash-window">
         <div class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1025 1025"><g transform="translate(0,1025) scale(.1,-.1)" fill="#fff"><path d="M5650 9569 c-75 -19 -114 -36 -370 -162 -560 -274 -759 -371 -885 -432 -71 -35 -256 -125 -410 -200 -154 -76 -352 -172 -440 -215 -88 -43 -295 -144 -460 -225 -165 -81 -408 -200 -540 -265 -732 -358 -726 -354 -816 -470 -216 -277 -176 -668 91 -891 41 -34 409 -238 1015 -564 121 -65 248 -133 282 -152 34 -18 66 -33 70 -33 4 0 8 44 8 98 0 84 4 105 27 154 56 121 68 129 548 366 903 445 1151 567 1365 672 121 59 355 174 520 255 165 81 377 185 470 230 94 46 328 160 520 255 193 95 449 221 570 280 282 137 328 183 328 325 1 128 -49 187 -238 284 -71 37 -238 123 -370 191 -132 67 -262 135 -290 150 -239 131 -668 338 -721 348 -69 14 -223 14 -274 1z"/><path d="M1590 6043 c0 -1082 -2 -1040 71 -1192 34 -69 57 -101 123 -166 85 -84 76 -78 770 -464 34 -18 169 -94 301 -169 478 -269 816 -453 858 -468 88 -33 209 -44 305 -30 101 16 165 39 282 105 47 27 175 97 285 156 110 59 223 120 250 135 393 212 406 220 465 306 53 76 65 119 65 234 0 99 -2 109 -33 171 -64 127 -15 96 -1047 672 -236 132 -515 288 -620 347 -104 59 -217 122 -250 140 -33 18 -100 56 -150 85 -74 43 -490 271 -585 321 -14 7 -72 39 -130 70 -58 32 -131 72 -162 89 -269 143 -518 284 -559 315 -84 63 -209 241 -209 298 0 6 -7 12 -15 12 -13 0 -15 -114 -15 -967z"/><path d="M7034 4618 c4 -18 9 -68 13 -111 5 -75 4 -81 -30 -150 -67 -134 18 -85 -1467 -855 -80 -41 -185 -96 -235 -122 -49 -26 -171 -89 -270 -140 -99 -51 -211 -110 -250 -130 -38 -21 -137 -72 -220 -115 -342 -177 -583 -303 -775 -405 -80 -42 -212 -112 -295 -155 -82 -43 -186 -97 -230 -120 -152 -80 -290 -153 -430 -225 -218 -112 -295 -207 -295 -360 0 -142 68 -233 247 -330 65 -35 132 -71 148 -80 17 -9 56 -31 88 -48 31 -18 81 -45 111 -62 66 -36 113 -62 231 -125 50 -27 107 -59 127 -72 21 -13 40 -23 42 -23 3 0 65 -33 138 -73 73 -41 169 -93 213 -117 44 -23 85 -46 90 -50 25 -19 157 -58 232 -70 93 -14 216 -2 312 31 46 16 1444 716 2506 1254 171 86 524 265 785 397 538 272 527 266 596 324 299 251 328 800 59 1115 -60 71 -116 111 -291 208 -82 46 -214 121 -294 166 -80 45 -203 115 -275 155 -214 120 -426 240 -497 281 -82 48 -92 49 -84 7z"/><path d="M6250 6901 c-69 -19 -111 -38 -280 -131 -58 -31 -139 -75 -180 -97 -700 -375 -708 -380 -763 -482 -74 -136 -46 -304 70 -412 26 -24 116 -82 198 -128 83 -46 186 -105 230 -131 44 -26 190 -110 325 -185 313 -176 288 -162 404 -229 54 -32 156 -89 225 -128 117 -66 274 -155 381 -216 25 -14 151 -85 280 -157 409 -229 1062 -596 1156 -651 149 -87 254 -208 312 -361 55 -146 54 -161 49 910 -5 1091 0 1015 -74 1166 -61 123 -156 212 -328 307 -77 43 -174 96 -215 119 -41 23 -100 55 -130 72 -30 16 -98 54 -150 83 -52 29 -120 67 -150 83 -63 35 -702 394 -825 464 -211 120 -365 150 -535 104z"/></g></svg><span>SipilStock</span></div>
         <div class="splash-title">
-          <div class="splash-word">CAD</div>
-          <div class="title">Sipil<span>CAD</span> 2027</div>
+          <div class="splash-product">SipilCAD</div>
+          <div class="splash-year">2027</div>
         </div>
         <div class="sub">Loading…</div>
       </div>

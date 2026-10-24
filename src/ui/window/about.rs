@@ -259,6 +259,12 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
                 Message::OpenUrl(crate::sipil::LICENSE_PATH.to_string()),
                 false,
             ),
+            // SIPIL: lisensi font PT Sans (splash dan huruf label ikon).
+            dialog_button(
+                "Font",
+                Message::OpenUrl(crate::sipil::FONT_PATH.to_string()),
+                false,
+            ),
             dialog_button(
                 "Source",
                 Message::OpenUrl(crate::sipil::SOURCE_PATH.to_string()),

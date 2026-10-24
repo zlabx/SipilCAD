@@ -49,8 +49,10 @@ const KNOWN_HOSTS: &[&str] = &[
     "youtube.com",
 ];
 
-/// Jumlah titik pemanggil `open_url(` dan `OpenUrl(` di `src/` yang sudah ditinjau.
-const KNOWN_OPEN_URL_SITES: usize = 25;
+/// Jumlah titik pemanggil `open_url(` dan `OpenUrl(` di `src/` yang sudah ditinjau: 25 dari upstream/kit
+/// sebelumnya, ditambah 1 untuk tombol "Font" di dialog About (patches/0006), yang membuka berkas lisensi
+/// PT Sans milik kita sendiri (`crate::sipil::FONT_PATH`, path relatif ke samping index.html).
+const KNOWN_OPEN_URL_SITES: usize = 26;
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
