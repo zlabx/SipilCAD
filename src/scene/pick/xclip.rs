@@ -48,14 +48,19 @@ fn resolve_extension_dictionary(doc: &CadDocument, owner: Handle) -> Option<Hand
         })
 }
 
-/// The INSERT's extension dictionary through its own link or the document's
-/// index — both O(1). Render walks ask this for every INSERT, so it must not
-/// fall back to [`resolve_extension_dictionary`]'s scan of every object.
+/// The INSERT's extension dictionary through its own link, or the stored
+/// INSERT's when `ins` is a copy taken before the link was made. Render walks
+/// ask this for every INSERT, so it must not fall back to a scan of every
+/// object: [`CadDocument::extension_dictionary_handle`] scans for an entity
+/// without a linked dictionary. Readers and `ensure_extension_dictionary`
+/// set the link.
 fn linked_extension_dictionary(doc: &CadDocument, ins: &Insert) -> Option<Handle> {
     ins.common
         .xdictionary_handle
-        .filter(|h| !h.is_null())
-        .or_else(|| doc.extension_dictionary_handle(ins.common.handle))
+        .or_else(|| {
+            doc.get_entity(ins.common.handle)
+                .and_then(|stored| stored.common().xdictionary_handle)
+        })
         .filter(|h| !h.is_null())
 }
 
@@ -250,7 +255,12 @@ pub fn set_insert_clip(
     let Some(codec::EntityType::Insert(ins)) = doc.get_entity(insert) else {
         return false;
     };
-    let t = ins.get_transform().matrix.m;
+    // The stored inverse is the inverse of the transform every consumer
+    // composes the boundary back with — the base-point-aware instance
+    // transform the render path uses. Storing the codec's base-ignoring
+    // inverse would displace the ring by exactly -base on the next render.
+    let forward = crate::scene::render_graph::insert_transform(doc, ins);
+    let t = forward.matrix.m;
     let forward = glam::DMat4::from_cols_array_2d(&[
         [t[0][0], t[1][0], t[2][0], t[3][0]],
         [t[0][1], t[1][1], t[2][1], t[3][1]],

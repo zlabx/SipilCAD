@@ -1,8 +1,8 @@
 use super::{
     document::{
         DeltaSnapshot, HistorySnapshot, ObjectEntryDelta, ObjectVisibilitySnapshot,
-        ParametricConstraintsEntryDelta, PendingHistorySnapshot, StructureSnapshot,
-        TableEntryDelta,
+        ParametricConstraintsEntryDelta, PendingHistorySnapshot, ReferenceDesignationDelta,
+        StructureSnapshot, TableEntryDelta,
     },
     OpenCADStudio,
 };
@@ -152,7 +152,7 @@ impl OpenCADStudio {
         defer_history_drop(discarded);
     }
 
-    fn push_undo_entry(&mut self, i: usize, snapshot: HistorySnapshot) {
+    pub(super) fn push_undo_entry(&mut self, i: usize, snapshot: HistorySnapshot) {
         self.tabs[i].history.undo_stack.push(snapshot);
         self.tabs[i].edit_revision = self.tabs[i].edit_revision.wrapping_add(1);
         self.clear_redo_history(i);
@@ -216,6 +216,7 @@ impl OpenCADStudio {
         }
         let selected: Vec<Handle> = self.tabs[i].scene.selected.iter().copied().collect();
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities,
             current_layout_before: self.tabs[i].scene.current_layout.clone(),
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -226,6 +227,7 @@ impl OpenCADStudio {
             active_layer: None,
             structure: (!objects.is_empty()).then_some(StructureSnapshot::Objects(objects)),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: label.into(),
         };
@@ -283,6 +285,7 @@ impl OpenCADStudio {
             return;
         };
         self.tabs[i].scene.document.end_entity_change_recording();
+        self.reconcile_block_edit_membership(i);
         let structure_after = self.tabs[i].scene.document.snapshot_structure();
         let before_images = pending.recorder.take_before_images();
         let added_handles: Vec<Handle> = before_images
@@ -292,11 +295,25 @@ impl OpenCADStudio {
                     .then_some(*handle)
             })
             .collect();
+        let block_members = self.tabs[i]
+            .active_block_edit_session()
+            .and_then(|session| {
+                pending
+                    .structure_before
+                    .block_records
+                    .get(&session.block_name)
+                    .map(|record| (session.block_name.clone(), record.entity_handles.clone()))
+            });
         codec::CadDocument::align_added_entity_structure(
             &mut pending.structure_before,
             &structure_after,
             &added_handles,
         );
+        if let Some((name, members)) = block_members {
+            if let Some(record) = pending.structure_before.block_records.get_mut(&name) {
+                record.entity_handles = members;
+            }
+        }
         let structure_changed = pending.structure_before != structure_after;
         let entities: Vec<_> = before_images
             .into_iter()
@@ -313,8 +330,30 @@ impl OpenCADStudio {
         let selected_after: Vec<Handle> = self.tabs[i].scene.selected.iter().copied().collect();
         let dirty_after = self.tabs[i].dirty;
         let active_layer_after = self.tabs[i].active_layer.clone();
+        // The designation set is scene state mutated through the plugin API:
+        // a scope that (un)marked entities carries the first-touch before
+        // values here; the after value is whatever the set holds now, and
+        // only untouched-value entries drop out (an idempotent re-mark never
+        // got recorded in the first place).
+        let reference_designations: Vec<_> = pending
+            .reference_designations_before
+            .into_iter()
+            .filter_map(|(handle, before)| {
+                let after = self.tabs[i].scene.reference_only.is_marked(handle);
+                (before != after).then_some(ReferenceDesignationDelta {
+                    handle,
+                    before,
+                    after,
+                })
+            })
+            .collect();
+        let visibility_after = self.tabs[i].scene.visibility_states.clone();
+        let visibility_states = (pending.visibility_states_before != visibility_after)
+            .then_some((pending.visibility_states_before, visibility_after));
         if !pending.keep_empty
+            && visibility_states.is_none()
             && entities.is_empty()
+            && reference_designations.is_empty()
             && !structure_changed
             && pending.selected_before == selected_after
             && pending.dirty_before == dirty_after
@@ -323,6 +362,7 @@ impl OpenCADStudio {
             return;
         }
         let delta = DeltaSnapshot {
+            visibility_states,
             entities,
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -335,6 +375,7 @@ impl OpenCADStudio {
             structure: structure_changed
                 .then_some(StructureSnapshot::Full(pending.structure_before)),
             parametric_constraints: Vec::new(),
+            reference_designations,
             named_parameters: None,
             label: pending.label,
         };
@@ -368,6 +409,7 @@ impl OpenCADStudio {
         let structure_before = self.tabs[i].scene.document.snapshot_structure();
         let recorder = self.tabs[i].scene.document.begin_entity_change_recording();
         self.tabs[i].history.pending = Some(PendingHistorySnapshot {
+            visibility_states_before: self.tabs[i].scene.visibility_states.clone(),
             label,
             current_layout,
             active_layer: self.tabs[i].active_layer.clone(),
@@ -375,8 +417,31 @@ impl OpenCADStudio {
             dirty_before,
             structure_before,
             recorder,
+            reference_designations_before: Vec::new(),
             keep_empty: false,
         });
+    }
+
+    /// Record the pre-mutation value of a reference-only designation (API v9)
+    /// into the open plugin pending scope — first touch wins. No-op when no
+    /// scope is open: like the XRecord methods, a designation change must open
+    /// its own scope before mutating, so by the time this runs a scope either
+    /// covers it or the caller owns one.
+    pub(super) fn record_reference_designation_before_pending(
+        &mut self,
+        i: usize,
+        handle: Handle,
+        before: bool,
+    ) {
+        if let Some(pending) = self.tabs[i].history.pending.as_mut() {
+            if !pending
+                .reference_designations_before
+                .iter()
+                .any(|(recorded, _)| *recorded == handle)
+            {
+                pending.reference_designations_before.push((handle, before));
+            }
+        }
     }
 
     /// [`Self::push_undo_snapshot`] for a command that is an undo step even
@@ -402,8 +467,8 @@ impl OpenCADStudio {
     ) -> Option<PendingDelta> {
         self.finish_pending_history(i);
         let label = label.into();
-        let structure_before =
-            (!delta_safe).then(|| self.tabs[i].scene.document.snapshot_structure());
+        let structure_before = (!delta_safe || self.tabs[i].active_block_edit.is_some())
+            .then(|| self.tabs[i].scene.document.snapshot_structure());
         self.tabs[i].scene.begin_undo_recording();
         Some(PendingDelta {
             label,
@@ -456,6 +521,7 @@ impl OpenCADStudio {
         }
         let selected_after = self.tabs[i].scene.selected.iter().copied().collect();
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities: Vec::new(),
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -466,6 +532,7 @@ impl OpenCADStudio {
             active_layer: None,
             structure: Some(StructureSnapshot::Layers(entries)),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: pending.label,
         };
@@ -513,6 +580,7 @@ impl OpenCADStudio {
             return;
         }
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities: Vec::new(),
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -523,6 +591,7 @@ impl OpenCADStudio {
             active_layer: None,
             structure: Some(StructureSnapshot::TextStyles(entries)),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: pending.label,
         };
@@ -570,6 +639,7 @@ impl OpenCADStudio {
             return;
         }
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities: Vec::new(),
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -580,6 +650,7 @@ impl OpenCADStudio {
             active_layer: None,
             structure: Some(StructureSnapshot::DimStyles(entries)),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: pending.label,
         };
@@ -635,6 +706,7 @@ impl OpenCADStudio {
             return;
         }
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities: Vec::new(),
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -645,6 +717,7 @@ impl OpenCADStudio {
             active_layer: None,
             structure: Some(StructureSnapshot::Objects(entries)),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: pending.label,
         };
@@ -664,6 +737,7 @@ impl OpenCADStudio {
         self.finish_pending_history(i);
         let (text_names, dim_names, object_handles) = after.changed_keys(&before);
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities: Vec::new(),
             current_layout_before: self.tabs[i].scene.current_layout.clone(),
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -680,6 +754,7 @@ impl OpenCADStudio {
                 object_handles,
             }),
             parametric_constraints: Vec::new(),
+            reference_designations: Vec::new(),
             named_parameters: None,
             label: "STYLE".to_string(),
         };
@@ -740,6 +815,7 @@ impl OpenCADStudio {
         let Some(rec) = self.tabs[i].scene.take_undo_recording() else {
             return;
         };
+        self.reconcile_block_edit_membership(i);
         // The predicate should have kept the command entity-only; if a primitive
         // still poisoned the recording we've already mutated and the pre-command
         // full state is gone, so the entity delta is the best we can do (its
@@ -761,8 +837,13 @@ impl OpenCADStudio {
                 pending.label
             );
         }
-        let (entity_before, object_before, parametric_constraints_before, named_parameters_before) =
-            rec.into_recorded_images();
+        let (
+            entity_before,
+            object_before,
+            parametric_constraints_before,
+            named_parameters_before,
+            reference_designations_before,
+        ) = rec.into_recorded_images();
         let entities: Vec<(Handle, Option<Arc<EntityType>>, Option<Arc<EntityType>>)> =
             entity_before
                 .into_iter()
@@ -808,11 +889,35 @@ impl OpenCADStudio {
             let after = self.tabs[i].scene.named_parameters().clone();
             (before != after).then_some((before, after))
         });
+        // Designations recorded by `remove_entities`'s delta path (the
+        // first-touch before values) close symmetric with the set's current
+        // state as the after image.
+        let reference_designations: Vec<ReferenceDesignationDelta> = reference_designations_before
+            .into_iter()
+            .filter_map(|(handle, before)| {
+                let after = self.tabs[i].scene.reference_only.is_marked(handle);
+                (before != after).then_some(ReferenceDesignationDelta {
+                    handle,
+                    before,
+                    after,
+                })
+            })
+            .collect();
         let selected_after = self.tabs[i].scene.selected.iter().copied().collect();
         let dirty_after = self.tabs[i].dirty;
         let mut structure = pending.structure_before.map(StructureSnapshot::Full);
         if let Some(before_structure) = structure.as_mut() {
             if let StructureSnapshot::Full(before_structure) = before_structure {
+                let block_members = self.tabs[i]
+                    .active_block_edit_session()
+                    .and_then(|session| {
+                        before_structure
+                            .block_records
+                            .get(&session.block_name)
+                            .map(|record| {
+                                (session.block_name.clone(), record.entity_handles.clone())
+                            })
+                    });
                 let after_structure = self.tabs[i].scene.document.snapshot_structure();
                 let added_handles: Vec<Handle> = entities
                     .iter()
@@ -825,6 +930,11 @@ impl OpenCADStudio {
                     &after_structure,
                     &added_handles,
                 );
+                if let Some((name, members)) = block_members {
+                    if let Some(record) = before_structure.block_records.get_mut(&name) {
+                        record.entity_handles = members;
+                    }
+                }
                 if *before_structure == after_structure {
                     structure = None;
                 }
@@ -834,6 +944,7 @@ impl OpenCADStudio {
             structure = Some(StructureSnapshot::Objects(objects));
         }
         let delta = DeltaSnapshot {
+            visibility_states: None,
             entities,
             current_layout_before: pending.current_layout,
             current_layout_after: self.tabs[i].scene.current_layout.clone(),
@@ -844,10 +955,148 @@ impl OpenCADStudio {
             active_layer: None,
             structure,
             parametric_constraints,
+            reference_designations,
             named_parameters,
             label: pending.label,
         };
         self.push_undo_entry(i, HistorySnapshot::Delta(Box::new(delta)));
+    }
+
+    fn apply_structure_state(&mut self, i: usize, structure: &mut StructureSnapshot, undo: bool) {
+        match structure {
+            StructureSnapshot::Combined(parts) => {
+                if undo {
+                    for part in parts {
+                        self.apply_structure_state(i, part, undo);
+                    }
+                } else {
+                    for part in parts.iter_mut().rev() {
+                        self.apply_structure_state(i, part, undo);
+                    }
+                }
+            }
+            StructureSnapshot::Full(stored) => {
+                let inverse = self.tabs[i]
+                    .scene
+                    .document
+                    .swap_structure(std::mem::replace(stored, codec::CadDocument::new()));
+                *stored = inverse;
+                self.tabs[i].scene.invalidate_dependency_index();
+                self.tabs[i].scene.bump_layout_epoch();
+                self.tabs[i].scene.bump_scale_epoch();
+                self.tabs[i].scene.bump_ucs_epoch();
+            }
+            StructureSnapshot::Layers(entries) => {
+                let names: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+                for entry in entries {
+                    let value = if undo {
+                        entry.before.clone()
+                    } else {
+                        entry.after.clone()
+                    };
+                    if let Some(layer) = value {
+                        self.tabs[i].scene.document.layers.add_or_replace(layer);
+                    } else {
+                        self.tabs[i].scene.document.layers.remove(&entry.name);
+                    }
+                }
+                self.tabs[i].scene.invalidate_layer_dependencies(&names);
+            }
+            StructureSnapshot::TextStyles(entries) => {
+                let names: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+                for entry in entries {
+                    let value = if undo {
+                        entry.before.clone()
+                    } else {
+                        entry.after.clone()
+                    };
+                    if let Some(style) = value {
+                        self.tabs[i]
+                            .scene
+                            .document
+                            .text_styles
+                            .add_or_replace(style);
+                    } else {
+                        self.tabs[i].scene.document.text_styles.remove(&entry.name);
+                    }
+                }
+                for name in names {
+                    self.tabs[i].scene.invalidate_text_style_dependencies(&name);
+                }
+            }
+            StructureSnapshot::DimStyles(entries) => {
+                let names: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+                for entry in entries {
+                    let value = if undo {
+                        entry.before.clone()
+                    } else {
+                        entry.after.clone()
+                    };
+                    if let Some(style) = value {
+                        self.tabs[i].scene.document.dim_styles.add_or_replace(style);
+                    } else {
+                        self.tabs[i].scene.document.dim_styles.remove(&entry.name);
+                    }
+                }
+                for name in names {
+                    self.tabs[i].scene.invalidate_dim_style_dependencies(&name);
+                }
+            }
+            StructureSnapshot::Objects(entries) => {
+                let mut layout_touched = false;
+                let mut scale_touched = false;
+                for entry in entries {
+                    let value = if undo {
+                        entry.before.clone()
+                    } else {
+                        entry.after.clone()
+                    };
+                    // Either direction can add/remove a layout: undoing
+                    // an insert removes it (`before` is `None`), redoing
+                    // re-inserts it — so both sides must be inspected.
+                    layout_touched |=
+                        matches!(entry.before, Some(codec::objects::ObjectType::Layout(_)))
+                            || matches!(entry.after, Some(codec::objects::ObjectType::Layout(_)));
+                    scale_touched |=
+                        matches!(entry.before, Some(codec::objects::ObjectType::Scale(_)))
+                            || matches!(entry.after, Some(codec::objects::ObjectType::Scale(_)));
+                    if let Some(object) = value {
+                        self.tabs[i]
+                            .scene
+                            .document
+                            .objects
+                            .insert(entry.handle, object);
+                    } else {
+                        self.tabs[i].scene.document.objects.remove(&entry.handle);
+                    }
+                }
+                if layout_touched {
+                    self.tabs[i].scene.bump_layout_epoch();
+                }
+                if scale_touched {
+                    self.tabs[i].scene.bump_scale_epoch();
+                }
+            }
+            StructureSnapshot::Styles {
+                before,
+                after,
+                text_names,
+                dim_names,
+                object_handles,
+            } => {
+                let snapshot = if undo { before } else { after };
+                self.restore_style_state(i, snapshot);
+                self.tabs[i]
+                    .scene
+                    .invalidate_text_style_dependencies_many(text_names);
+                self.tabs[i]
+                    .scene
+                    .invalidate_dim_style_dependencies_many(dim_names);
+                self.tabs[i]
+                    .scene
+                    .invalidate_object_style_dependencies(object_handles);
+            }
+        }
     }
 
     /// Apply one side of a delta entry in place: `undo` restores each entity's
@@ -865,147 +1114,45 @@ impl OpenCADStudio {
         // and UI invalidation are deferred until every requested undo/redo step
         // has been applied.
         if let Some(structure) = d.structure.as_mut() {
-            match structure {
-                StructureSnapshot::Full(stored) => {
-                    let inverse = self.tabs[i]
-                        .scene
-                        .document
-                        .swap_structure(std::mem::replace(stored, codec::CadDocument::new()));
-                    *stored = inverse;
-                    self.tabs[i].scene.invalidate_dependency_index();
-                    self.tabs[i].scene.bump_layout_epoch();
-                    self.tabs[i].scene.bump_scale_epoch();
-                    self.tabs[i].scene.bump_ucs_epoch();
-                }
-                StructureSnapshot::Layers(entries) => {
-                    let names: Vec<String> =
-                        entries.iter().map(|entry| entry.name.clone()).collect();
-                    for entry in entries {
-                        let value = if undo {
-                            entry.before.clone()
-                        } else {
-                            entry.after.clone()
-                        };
-                        if let Some(layer) = value {
-                            self.tabs[i].scene.document.layers.add_or_replace(layer);
-                        } else {
-                            self.tabs[i].scene.document.layers.remove(&entry.name);
-                        }
-                    }
-                    self.tabs[i].scene.invalidate_layer_dependencies(&names);
-                }
-                StructureSnapshot::TextStyles(entries) => {
-                    let names: Vec<String> =
-                        entries.iter().map(|entry| entry.name.clone()).collect();
-                    for entry in entries {
-                        let value = if undo {
-                            entry.before.clone()
-                        } else {
-                            entry.after.clone()
-                        };
-                        if let Some(style) = value {
-                            self.tabs[i]
-                                .scene
-                                .document
-                                .text_styles
-                                .add_or_replace(style);
-                        } else {
-                            self.tabs[i].scene.document.text_styles.remove(&entry.name);
-                        }
-                    }
-                    for name in names {
-                        self.tabs[i].scene.invalidate_text_style_dependencies(&name);
-                    }
-                }
-                StructureSnapshot::DimStyles(entries) => {
-                    let names: Vec<String> =
-                        entries.iter().map(|entry| entry.name.clone()).collect();
-                    for entry in entries {
-                        let value = if undo {
-                            entry.before.clone()
-                        } else {
-                            entry.after.clone()
-                        };
-                        if let Some(style) = value {
-                            self.tabs[i].scene.document.dim_styles.add_or_replace(style);
-                        } else {
-                            self.tabs[i].scene.document.dim_styles.remove(&entry.name);
-                        }
-                    }
-                    for name in names {
-                        self.tabs[i].scene.invalidate_dim_style_dependencies(&name);
-                    }
-                }
-                StructureSnapshot::Objects(entries) => {
-                    let mut layout_touched = false;
-                    let mut scale_touched = false;
-                    for entry in entries {
-                        let value = if undo {
-                            entry.before.clone()
-                        } else {
-                            entry.after.clone()
-                        };
-                        // Either direction can add/remove a layout: undoing
-                        // an insert removes it (`before` is `None`), redoing
-                        // re-inserts it — so both sides must be inspected.
-                        layout_touched |=
-                            matches!(entry.before, Some(codec::objects::ObjectType::Layout(_)))
-                                || matches!(
-                                    entry.after,
-                                    Some(codec::objects::ObjectType::Layout(_))
-                                );
-                        scale_touched |=
-                            matches!(entry.before, Some(codec::objects::ObjectType::Scale(_)))
-                                || matches!(
-                                    entry.after,
-                                    Some(codec::objects::ObjectType::Scale(_))
-                                );
-                        if let Some(object) = value {
-                            self.tabs[i]
-                                .scene
-                                .document
-                                .objects
-                                .insert(entry.handle, object);
-                        } else {
-                            self.tabs[i].scene.document.objects.remove(&entry.handle);
-                        }
-                    }
-                    if layout_touched {
-                        self.tabs[i].scene.bump_layout_epoch();
-                    }
-                    if scale_touched {
-                        self.tabs[i].scene.bump_scale_epoch();
-                    }
-                }
-                StructureSnapshot::Styles {
-                    before,
-                    after,
-                    text_names,
-                    dim_names,
-                    object_handles,
-                } => {
-                    let snapshot = if undo { before } else { after };
-                    self.restore_style_state(i, snapshot);
-                    self.tabs[i]
-                        .scene
-                        .invalidate_text_style_dependencies_many(text_names);
-                    self.tabs[i]
-                        .scene
-                        .invalidate_dim_style_dependencies_many(dim_names);
-                    self.tabs[i]
-                        .scene
-                        .invalidate_object_style_dependencies(object_handles);
-                }
+            self.apply_structure_state(i, structure, undo);
+        }
+        let mut changes = self.tabs[i].scene.apply_entity_delta(&d.entities, undo);
+        let scene = &mut self.tabs[i].scene;
+        // Designations: restore the chosen side's value on the scene-owned set
+        // (the entity images above already applied, so a restored entity is
+        // present before its designation is). Each actual flip joins the
+        // returned per-handle change list so the deferred cache reseed and
+        // geometry bump re-stamp that entity's wires.
+        for entry in &d.reference_designations {
+            let value = if undo { entry.before } else { entry.after };
+            if scene.set_reference_only_membership(entry.handle, value) {
+                changes.push((entry.handle, crate::scene::ChangeKind::Modified));
             }
         }
-        let changes = self.tabs[i].scene.apply_entity_delta(&d.entities, undo);
-        let scene = &mut self.tabs[i].scene;
         if !d.parametric_constraints.is_empty() {
             scene.bump_constraints_epoch();
         }
         for entry in &d.parametric_constraints {
+            if let crate::scene::parametric_constraints::ParametricScope::Block(owner) = entry.scope
+            {
+                if !scene
+                    .document
+                    .block_records
+                    .iter()
+                    .any(|record| record.handle == owner)
+                {
+                    scene
+                        .parametric_constraints
+                        .retain(|set| set.scope != entry.scope);
+                    continue;
+                }
+            }
             let value = if undo { &entry.before } else { &entry.after };
             *scene.parametric_constraint_set_mut(entry.scope) = value.clone();
+        }
+        if let Some((before, after)) = &d.visibility_states {
+            scene.visibility_states = if undo { before } else { after }.clone();
+            scene.bump_geometry();
         }
         if let Some((before, after)) = &d.named_parameters {
             scene.named_parameters = if undo { before } else { after }.clone();
@@ -1081,6 +1228,7 @@ impl OpenCADStudio {
         i: usize,
         had_full: bool,
         layer_panel_changed: bool,
+        native_graph_changed: bool,
         changes: &[(Handle, crate::scene::ChangeKind)],
     ) {
         self.tabs[i].edit_revision = self.tabs[i].edit_revision.wrapping_add(1);
@@ -1128,7 +1276,11 @@ impl OpenCADStudio {
                     }
                 }
             }
-            scene.sync_native_parametric_graph();
+            // Geometry or visibility replay does not change the constraint
+            // model. Rebuilding its graph would replace imported networks.
+            if native_graph_changed {
+                scene.sync_native_parametric_graph();
+            }
             scene.clear_preview_wire();
         }
         // UCS state is cached separately from its persisted header/viewport
@@ -1158,6 +1310,12 @@ impl OpenCADStudio {
     }
 
     pub(super) fn undo_steps(&mut self, steps: usize) {
+        self.undo_steps_reported(steps, true);
+    }
+
+    /// [`Self::undo_steps`]; `report` false takes the steps back without
+    /// the command-line notice (a dialog withdrawing its own live changes).
+    pub(super) fn undo_steps_reported(&mut self, steps: usize, report: bool) {
         let i = self.active_tab;
         self.finish_pending_history(i);
         let available = self.tabs[i].history.undo_stack.len();
@@ -1171,22 +1329,26 @@ impl OpenCADStudio {
         let mut last_label = String::new();
         let mut had_full = false;
         let mut layer_panel_changed = false;
+        let mut native_graph_changed = false;
         let mut changes = Vec::new();
         for _ in 0..steps {
             let Some(snapshot) = self.tabs[i].history.undo_stack.pop() else {
                 break;
             };
             last_label = snapshot.label().to_string();
+            let step_label = last_label.clone();
             match snapshot {
                 HistorySnapshot::Delta(mut d) => {
+                    native_graph_changed |=
+                        !d.parametric_constraints.is_empty() || d.named_parameters.is_some();
                     // Symmetric: undo applies the before side, then the same
                     // delta rides to the redo stack (it still holds the after
                     // side) — no current-state capture needed.
                     layer_panel_changed |= d.structure.as_ref().is_some_and(|structure| {
                         matches!(
                             structure,
-                            StructureSnapshot::Full(_) | StructureSnapshot::Layers(_)
-                        )
+                            StructureSnapshot::Layers(_)
+                        ) || structure.is_full()
                     }) || d.active_layer.is_some()
                         || d.entities.iter().any(|(_, before, after)| {
                             before
@@ -1211,10 +1373,19 @@ impl OpenCADStudio {
                         .push(HistorySnapshot::ObjectVisibility(v));
                 }
             }
+            self.refedit_after_history_step(i, &step_label, true);
         }
-        self.finish_history_apply(i, had_full, layer_panel_changed, &changes);
-        self.command_line
-            .push_output(crate::tf!("Undo: {last_label}").as_ref());
+        self.finish_history_apply(
+            i,
+            had_full,
+            layer_panel_changed,
+            native_graph_changed,
+            &changes,
+        );
+        if report {
+            self.command_line
+                .push_output(crate::tf!("Undo: {last_label}").as_ref());
+        }
     }
 
     pub(super) fn redo_steps(&mut self, steps: usize) {
@@ -1231,19 +1402,23 @@ impl OpenCADStudio {
         let mut last_label = String::new();
         let mut had_full = false;
         let mut layer_panel_changed = false;
+        let mut native_graph_changed = false;
         let mut changes = Vec::new();
         for _ in 0..steps {
             let Some(snapshot) = self.tabs[i].history.redo_stack.pop() else {
                 break;
             };
             last_label = snapshot.label().to_string();
+            let step_label = last_label.clone();
             match snapshot {
                 HistorySnapshot::Delta(mut d) => {
+                    native_graph_changed |=
+                        !d.parametric_constraints.is_empty() || d.named_parameters.is_some();
                     layer_panel_changed |= d.structure.as_ref().is_some_and(|structure| {
                         matches!(
                             structure,
-                            StructureSnapshot::Full(_) | StructureSnapshot::Layers(_)
-                        )
+                            StructureSnapshot::Layers(_)
+                        ) || structure.is_full()
                     }) || d.active_layer.is_some()
                         || d.entities.iter().any(|(_, before, after)| {
                             before
@@ -1268,8 +1443,15 @@ impl OpenCADStudio {
                         .push(HistorySnapshot::ObjectVisibility(v));
                 }
             }
+            self.refedit_after_history_step(i, &step_label, false);
         }
-        self.finish_history_apply(i, had_full, layer_panel_changed, &changes);
+        self.finish_history_apply(
+            i,
+            had_full,
+            layer_panel_changed,
+            native_graph_changed,
+            &changes,
+        );
         self.command_line
             .push_output(crate::tf!("Redo: {last_label}").as_ref());
     }

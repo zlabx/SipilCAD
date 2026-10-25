@@ -19,6 +19,20 @@ pub const SOURCE_PATH: &str = "SOURCE.txt";
 /// oleh `<link data-trunk rel="copy-file" href="web/pt-sans/OFL-PTSans.txt">` di web-app.html (patch 0009).
 pub const FONT_PATH: &str = "OFL-PTSans.txt";
 
+/// Versi SipilCAD yang tampil di dialog About (judul kartu atas) dan di baris pertama "Copy Info". Sengaja terpisah dari versi
+/// upstream (`version` di Cargo.toml, `OCS_APP_VERSION`), yang tetap mengikuti rilis Open CAD Studio dan dipakai bagian lain
+/// (agen pengguna jaringan, penanda dialog donasi, API otomasi). Format `<tahun>.<nomor>` tanpa awalan "v" dan tanpa angka nol
+/// di depan nomor; naikkan di sini bila SipilCAD merilis versi baru.
+pub const APP_VERSION: &str = "2027.0";
+
+/// Kalimat singkat di bawah nama produk pada dialog About (pengganti "CAD application for Architecture & Engineering").
+pub const ABOUT_TAGLINE: &str = "CAD for civil engineers";
+
+/// Dialog About hanya menampilkan kartu atas (logo, nama, kalimat, versi) dan baris tombol bawah; kartu versi/platform/arch,
+/// build/commit/profile, dan baris CPU/RAM/GPU disembunyikan sehingga jendelanya lebih pendek. Info yang sama tetap ada di teks
+/// "Copy Info". Setel `false` untuk menampilkan dialog lengkap seperti upstream.
+pub const COMPACT_ABOUT: bool = true;
+
 /// Potongan URL (huruf kecil) milik proyek upstream. Cukup mencocokkan substring: pola dipilih
 /// agar tidak mengenai domain kita atau hyperlink yang tertanam di gambar milik pengguna.
 const BLOCKED_URL_PARTS: &[&str] = &[
@@ -92,6 +106,28 @@ mod tests {
     #[test]
     fn matching_ignores_case() {
         assert!(is_blocked_url("HTTPS://PATREON.COM/hakanseven12"));
+    }
+
+    /// `<tahun>.<nomor>` (mis. "2027.0"): empat angka, titik, lalu nomor tanpa nol di depan; tanpa awalan "v" (dialog
+    /// menambahkannya sendiri) dan tanpa akhiran build.
+    #[test]
+    fn app_version_has_year_dot_number_shape() {
+        let (year, number) = APP_VERSION.split_once('.').expect("harus <tahun>.<nomor>");
+        assert!(year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()), "tahun: {APP_VERSION}");
+        assert!(
+            !number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+                && (number == "0" || !number.starts_with('0')),
+            "nomor: {APP_VERSION}"
+        );
+    }
+
+    /// Kalimat About singkat (satu baris di bawah nama) dan tidak memakai teks upstream.
+    #[test]
+    fn about_tagline_is_short_and_not_upstream() {
+        assert!(!ABOUT_TAGLINE.trim().is_empty() && ABOUT_TAGLINE.chars().count() <= 40, "{ABOUT_TAGLINE}");
+        assert!(!ABOUT_TAGLINE.contains("Architecture & Engineering"));
+        assert!(!ABOUT_TAGLINE.to_ascii_lowercase().contains("open cad studio"));
     }
 
     #[test]

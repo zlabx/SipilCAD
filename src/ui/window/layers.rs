@@ -4,6 +4,7 @@ use crate::app::Message;
 use crate::t;
 use crate::ui::properties::{lw_options, LinetypeItem, LwItem};
 use crate::ui::style::common::muted_style;
+use crate::ui::style::form::field_style_with_radius;
 use crate::ui::style::row_button::{cell_button_style, header_button_style};
 use crate::ui::ROW_H;
 use codec::tables::layer::Layer as DocLayer;
@@ -53,29 +54,6 @@ const LINETYPE_MENU_W: f32 = 220.0;
 /// scrolled into view after it is added (#271).
 pub const LAYER_TABLE_SCROLL_ID: &str = "layer-manager-table-scroll";
 
-fn table_input_style(
-    theme: &Theme,
-    status: iced::widget::text_input::Status,
-) -> iced::widget::text_input::Style {
-    let palette = theme.palette();
-    let border = match status {
-        iced::widget::text_input::Status::Focused { .. } => palette.primary.base.color,
-        _ => palette.background.neutral.color,
-    };
-    iced::widget::text_input::Style {
-        background: Background::Color(palette.background.base.color),
-        border: Border {
-            color: border,
-            width: 1.0,
-            radius: 2.0.into(),
-        },
-        icon: palette.background.base.text,
-        placeholder: palette.background.base.text.scale_alpha(0.48),
-        value: palette.background.base.text,
-        selection: palette.primary.base.color.scale_alpha(0.5),
-    }
-}
-
 // ── Layer data ────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -119,8 +97,6 @@ impl Layer {
 #[derive(Clone)]
 pub struct LayerPanel {
     pub layers: Vec<Layer>,
-    #[allow(dead_code)]
-    pub visible: bool,
     /// Anchor row: the last row clicked. Drives the editable combos and the
     /// Shift-range origin. Its layer is always part of `selected_multi`.
     pub selected: Option<usize>,
@@ -152,7 +128,6 @@ pub struct LayerPanel {
 impl Default for LayerPanel {
     fn default() -> Self {
         Self {
-            visible: false,
             layers: vec![Layer::new("0", AcadColor::Index(7))],
             selected: None,
             selected_multi: Vec::new(),
@@ -337,20 +312,40 @@ impl LayerPanel {
             .collect()
     }
 
-    /// Render the layer panel as the full content of its own OS window.
-    pub fn view_window(
+    /// The Layer Manager as a dock pallet: its title bar, the toolbar across
+    /// the pallet (search box on the right), then the table, at least as wide
+    /// as the pallet and scrolling sideways when the pallet is narrower.
+    pub fn view_panel(
         &self,
         name_col_w: f32,
-        sizing: crate::ui::modal::ModalSizing,
+        width: f32,
+        chrome: crate::ui::dock::Chrome,
     ) -> Element<'_, Message> {
-        self.view_content(name_col_w, sizing)
+        use crate::ui::dock::PanelId;
+        let title_bar = crate::ui::dock::title_bar(
+            PanelId::Layers,
+            crate::tr!("modal", "layer-manager"),
+            chrome,
+        );
+        // Inside the pallet's 1 px border on either side.
+        let body = self.view_content(name_col_w, (width - 2.0).max(0.0));
+        container(column![title_bar, body])
+            .width(Length::Fixed(width))
+            .height(Length::Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(theme.palette().background.base.color)),
+                border: Border {
+                    color: theme.palette().background.neutral.color,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
     }
 
-    fn view_content(
-        &self,
-        name_col_w: f32,
-        sizing: crate::ui::modal::ModalSizing,
-    ) -> Element<'_, Message> {
+    /// Toolbar and table for a pallet `inner_w` wide.
+    fn view_content(&self, name_col_w: f32, inner_w: f32) -> Element<'_, Message> {
         let has_sel = self.selected.is_some();
         let sel_is_zero = self
             .selected
@@ -377,14 +372,14 @@ impl LayerPanel {
                     Message::LayerSetCurrent,
                     can_set_current,
                 ),
-                iced::widget::Space::new().width(sizing.width),
+                iced::widget::Space::new().width(Length::Fill),
                 // Search box: filters rows by name as the user types (#343).
                 text_input(t!("Search…").as_ref(), &self.filter)
                     .on_input(Message::LayerManagerFilterChanged)
                     .size(FONT_SZ)
                     .padding([3, 6])
                     .width(Length::Fixed(180.0))
-                    .style(table_input_style),
+                    .style(|theme, status| field_style_with_radius(theme, status, 2.0)),
             ]
             .spacing(2)
             .align_y(iced::Center),
@@ -393,7 +388,7 @@ impl LayerPanel {
             background: Some(Background::Color(theme.palette().background.weak.color)),
             ..Default::default()
         })
-        .width(sizing.width)
+        .width(Length::Fill)
         .padding([4, 8]);
 
         // ── Column header ─────────────────────────────────────────────────
@@ -473,7 +468,6 @@ impl LayerPanel {
             ),
         ]
         .spacing(4)
-        .width(sizing.width)
         .align_y(iced::Center);
 
         for vp in &self.vp_cols {
@@ -499,7 +493,7 @@ impl LayerPanel {
                 }
             })
             .padding([4, 8])
-            .width(sizing.width);
+            .width(Length::Fill);
 
         // ── Layer rows ────────────────────────────────────────────────────
         let mut rows_col = column![].spacing(0);
@@ -536,17 +530,28 @@ impl LayerPanel {
 
         let table = scrollable(rows_col)
             .id(iced::advanced::widget::Id::new(LAYER_TABLE_SCROLL_ID))
-            .height(sizing.height.min(240.0));
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-        // ── Full-window frame ─────────────────────────────────────────────
-        container(column![toolbar, col_header, table].spacing(0))
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(theme.palette().background.base.color)),
-                ..Default::default()
-            })
-            .width(sizing.width)
-            .height(sizing.height)
-            .into()
+        // The header and table stretch to the wider of their columns and the
+        // pallet (the zero-height spacer), so the header's grey band and
+        // borders always run to the pallet's edge; a narrower pallet scrolls
+        // the table sideways while the toolbar stays put.
+        let grid = column![
+            col_header,
+            table,
+            iced::widget::Space::new()
+                .width(Length::Fixed(inner_w))
+                .height(0),
+        ]
+        .height(Length::Fill);
+        let grid = scrollable(grid)
+            .direction(iced::widget::scrollable::Direction::Horizontal(
+                iced::widget::scrollable::Scrollbar::new(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill);
+        column![toolbar, grid].height(Length::Fill).into()
     }
 }
 
@@ -707,6 +712,12 @@ fn name_tip<'a>(name: &'a str) -> Element<'a, Message> {
         .into()
 }
 
+/// The layer-name field while a rename is open; a click that moves focus
+/// elsewhere commits the typed name.
+pub fn rename_input_id() -> iced::widget::Id {
+    iced::widget::Id::new("layer-rename-input")
+}
+
 fn layer_row<'a>(
     index: usize,
     layer: &'a Layer,
@@ -773,6 +784,7 @@ fn layer_row<'a>(
     // Name cell
     let name_cell: Element<'_, Message> = if is_editing {
         text_input("", edit_buf)
+            .id(rename_input_id())
             .on_input(Message::LayerRenameEdit)
             .on_submit(Message::LayerRenameCommit)
             .size(FONT_SZ)
@@ -782,7 +794,7 @@ fn layer_row<'a>(
                 left: 4.0,
                 right: 4.0,
             })
-            .style(table_input_style)
+            .style(|theme, status| field_style_with_radius(theme, status, 2.0))
             .width(Length::Fixed(name_col_w))
             .into()
     } else {
@@ -858,7 +870,7 @@ fn layer_row<'a>(
                 right: 4.0,
             })
             .width(Length::Fixed(COL_LT))
-            .input_style(combo_input_style),
+            .input_style(|theme, status| field_style_with_radius(theme, status, 2.0)),
             LINETYPE_MENU_W,
         )
     } else {
@@ -886,7 +898,7 @@ fn layer_row<'a>(
             right: 4.0,
         })
         .width(Length::Fixed(COL_LW))
-        .input_style(combo_input_style)
+        .input_style(|theme, status| field_style_with_radius(theme, status, 2.0))
         .into()
     } else {
         text(cur_lw_item.to_string())
@@ -909,7 +921,7 @@ fn layer_row<'a>(
             right: 4.0,
         })
         .style(|theme: &Theme, status| {
-            let mut style = table_input_style(theme, status);
+            let mut style = field_style_with_radius(theme, status, 2.0);
             style.background = iced::Background::Color(Color::TRANSPARENT);
             style
         })
@@ -985,15 +997,6 @@ fn layer_row<'a>(
     )
     .on_press(Message::LayerSelect(lname))
     .into()
-}
-
-// ── Combo style ────────────────────────────────────────────────────────────
-
-fn combo_input_style(
-    theme: &Theme,
-    status: iced::widget::text_input::Status,
-) -> iced::widget::text_input::Style {
-    table_input_style(theme, status)
 }
 
 // ── Display helpers ───────────────────────────────────────────────────────

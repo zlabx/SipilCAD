@@ -113,9 +113,13 @@ pub(crate) fn report() -> String {
     let mut out = format!(
         "{} v{}\nRevision: {}\nCommit date: {}\nProfile: {}\nFeatures: {}\n\n\
          [System]\nOS: {} ({} {})\nCPU: {}\nLogical processors: {}\nRAM: {} total, {} available\n",
-        // SIPIL: nama produk di info yang disalin pengguna.
+        // SIPIL: nama dan versi produk di info yang disalin pengguna.
         if crate::sipil::HIDE_UPSTREAM_LINKS { "SipilCAD" } else { "Open CAD Studio" },
-        env!("OCS_FULL_VERSION"),
+        if crate::sipil::HIDE_UPSTREAM_LINKS {
+            crate::sipil::APP_VERSION
+        } else {
+            env!("OCS_FULL_VERSION")
+        },
         env!("OCS_GIT_REV"),
         env!("OCS_COMMIT_DATE"),
         env!("OCS_BUILD_PROFILE"),
@@ -175,7 +179,12 @@ fn build_label() -> std::borrow::Cow<'static, str> {
 pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Message> {
     // The hero carries the full build identity (`2026.36+194.gef189d77`);
     // the cards split it into the release version and the build details.
-    let version = format!("v{}", env!("OCS_FULL_VERSION"));
+    // SIPIL: versi SipilCAD (src/sipil.rs), bukan versi upstream.
+    let version = if crate::sipil::HIDE_UPSTREAM_LINKS {
+        format!("v{}", crate::sipil::APP_VERSION)
+    } else {
+        format!("v{}", env!("OCS_FULL_VERSION"))
+    };
     let build = build_label();
     let content_width = if matches!(sizing.width, Length::Fill) {
         Fill
@@ -205,9 +214,14 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
                 })
                 .size(28)
                 .style(primary_style),
-                text(t!("CAD application for Architecture & Engineering"))
-                    .size(11)
-                    .style(muted_style),
+                // SIPIL: kalimat singkat milik SipilCAD (src/sipil.rs).
+                text(if crate::sipil::HIDE_UPSTREAM_LINKS {
+                    std::borrow::Cow::Borrowed(crate::sipil::ABOUT_TAGLINE)
+                } else {
+                    t!("CAD application for Architecture & Engineering")
+                })
+                .size(11)
+                .style(muted_style),
                 text(version.clone()).size(13),
             ]
             .spacing(5),
@@ -216,7 +230,13 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
         .align_y(iced::Center),
     )
     .padding([14, 16])
-    .width(content_width)
+    // SIPIL: tanpa kartu detail (COMPACT_ABOUT), lebar jendela tetap sama dengan versi lengkap:
+    // pada ukuran alami hero setinggi lebar tiga kartu, pada ukuran isi ia mengikuti jendela.
+    .width(if crate::sipil::COMPACT_ABOUT && !matches!(sizing.width, Length::Fill) {
+        Length::Fixed(148.0 * 3.0 + 16.0)
+    } else {
+        content_width
+    })
     .style(surface_style);
 
     let metadata = row![
@@ -284,18 +304,20 @@ pub fn view_window(sizing: crate::ui::modal::ModalSizing) -> Element<'static, Me
             .into()
     };
 
+    // SIPIL: dialog hanya menampilkan kartu atas (hero) dan baris tombol bawah; kartu versi/platform/
+    // arch, build/commit/profile, dan baris CPU/RAM/GPU disembunyikan oleh COMPACT_ABOUT. Info yang
+    // sama tetap ada di teks "Copy Info" (report()).
+    let mut body = column![hero];
+    if !crate::sipil::COMPACT_ABOUT {
+        body = body.push(metadata).push(build_info).push(system);
+    }
+    body = body.push(action_row);
+
     container(
-        column![
-            hero,
-            metadata,
-            build_info,
-            system,
-            action_row,
-        ]
-        .spacing(12)
-        .padding(16)
-        .width(sizing.width)
-        .height(sizing.height),
+        body.spacing(12)
+            .padding(16)
+            .width(sizing.width)
+            .height(sizing.height),
     )
     .width(sizing.width)
     .height(sizing.height)

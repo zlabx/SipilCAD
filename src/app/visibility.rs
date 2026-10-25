@@ -117,6 +117,34 @@ impl OpenCADStudio {
         })
     }
 
+    /// The visibility parameter of a dynamic-block reference as a Properties
+    /// row: the parameter's name, its states, and the one shown now.
+    pub(super) fn visibility_property(
+        doc: &codec::CadDocument,
+        handle: Handle,
+    ) -> Option<crate::scene::model::object::Property> {
+        let Some(EntityType::Insert(ins)) = doc.get_entity(handle) else {
+            return None;
+        };
+        let (def_block, param) = doc.dynamic_visibility_for_insert(handle)?;
+        let options: Vec<String> = param.states.iter().map(|s| s.name.clone()).collect();
+        let current = Self::current_visibility_state(doc, def_block, &ins.block_name, param);
+        // An unnamed parameter takes the name a new one gets in the file.
+        let label = if param.element_name.trim().is_empty() {
+            "Visibility1".to_string()
+        } else {
+            param.element_name.clone()
+        };
+        Some(crate::scene::model::object::Property {
+            label,
+            field: "dyn_visibility",
+            value: crate::scene::model::object::PropValue::Choice {
+                selected: current.and_then(|c| options.get(c).cloned()).unwrap_or_default(),
+                options,
+            },
+        })
+    }
+
     /// Recompute the visibility grip for the active tab's single selection and
     /// append it (as a Triangle grip) to `selected_grips`. Clears it when the
     /// selection is not a dynamic-block reference. `wo` is the world offset
@@ -136,7 +164,10 @@ impl OpenCADStudio {
             return;
         };
 
-        let wp = ins.get_transform().apply(Vector3::new(
+        // `def_point` is a block-definition coordinate (see the codec's
+        // BlockVisibilityParameter), so the grip follows the same base-point
+        // convention as the rendered reference.
+        let wp = crate::scene::render_graph::insert_transform(doc, ins).apply(Vector3::new(
             param.def_point.x,
             param.def_point.y,
             param.def_point.z,
@@ -183,6 +214,12 @@ impl OpenCADStudio {
             return;
         }
 
+        // A reference to the definition itself, or to a copy other
+        // references share, gets its own evaluated copy first, so the state
+        // picked for it leaves the definition and the others alone.
+        self.push_undo_snapshot(i, "Visibility State");
+        self.tabs[i].scene.visibility_representation(insert_handle);
+
         // Resolve everything against an immutable borrow first.
         let mapping = {
             let doc = &self.tabs[i].scene.document;
@@ -198,8 +235,6 @@ impl OpenCADStudio {
         let Some(mapping) = mapping else {
             return;
         };
-
-        self.push_undo_snapshot(i, "Visibility State");
 
         // Apply invisibility flags to the anonymous block's members.
         {

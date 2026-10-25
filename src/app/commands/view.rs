@@ -336,10 +336,12 @@ impl OpenCADStudio {
 
             "REPORT" => {
                 // Pre-fill the GitHub issue body with version + platform so
-                // reports arrive with the basics already filled in.
+                // reports arrive with the basics already filled in. The rule
+                // is `***`: text typed right above a `---` line turns into a
+                // Markdown heading.
                 let body = format!(
                     "<!-- Describe the issue and the steps to reproduce it. -->\n\n\n\
-                     ---\n- Open CAD Studio: v{}\n- Revision: {} ({}, {})\n- Platform: {}\n",
+                     ***\n- Open CAD Studio: v{}\n- Revision: {} ({}, {})\n- Platform: {}\n",
                     env!("OCS_FULL_VERSION"),
                     env!("OCS_GIT_REV"),
                     env!("OCS_COMMIT_DATE"),
@@ -466,6 +468,7 @@ impl OpenCADStudio {
                                 }
                             }
                         }
+                        crate::app::shortcuts::sync_space_dispatch_flag(&self.shortcut_bindings);
                         self.persist_settings_if_changed();
                         self.command_line.push_output(
                             crate::tf!("CUIIMPORT: loaded {n} shortcut(s) from \"{path}\".")
@@ -500,6 +503,9 @@ impl OpenCADStudio {
                                 self.command_line.push_error(crate::t!("Usage: SHORTCUTS SET <key> <command>  e.g. SHORTCUTS SET CTRL+D DIST").as_ref());
                             } else {
                                 self.shortcut_bindings.insert(key.clone(), cmd_str.clone());
+                                crate::app::shortcuts::sync_space_dispatch_flag(
+                                    &self.shortcut_bindings,
+                                );
                                 self.persist_settings_if_changed();
                                 self.command_line.push_output(
                                     crate::tf!("Shortcut set: {key} → {cmd_str}").as_ref(),
@@ -517,6 +523,9 @@ impl OpenCADStudio {
                             .remove(&crate::app::shortcuts::normalize_key(&key))
                             .is_some()
                         {
+                            crate::app::shortcuts::sync_space_dispatch_flag(
+                                &self.shortcut_bindings,
+                            );
                             self.persist_settings_if_changed();
                             self.command_line
                                 .push_output(crate::tf!("Shortcut '{key}' removed.").as_ref());
@@ -545,7 +554,8 @@ impl OpenCADStudio {
                     "Available themes: {}",
                     "DARK LIGHT DRACULA NORD SOLARIZED_LIGHT SOLARIZED_DARK \
                      GRUVBOX_LIGHT GRUVBOX_DARK TOKYONIGHT TOKYONIGHTSTORM TOKYONIGHTLIGHT \
-                     KANAGAWAWAVE KANAGAWADRAGON KANAGAWALOTUS MOONFLY NIGHTFLY OXOCARBON FERRA",
+                     KANAGAWAWAVE KANAGAWADRAGON KANAGAWALOTUS MOONFLY NIGHTFLY OXOCARBON FERRA \
+                     SYSTEM (follows the OS or browser color scheme)",
                 ));
                 self.command_line.push_info(&crate::tf!(
                     "Current color scheme: <{}>",
@@ -569,13 +579,37 @@ impl OpenCADStudio {
                     self.command_line.push_output(&crate::tf!("Available themes: {}",
                         "DARK LIGHT DRACULA NORD SOLARIZED_LIGHT SOLARIZED_DARK \
                          GRUVBOX_LIGHT GRUVBOX_DARK TOKYONIGHT TOKYONIGHTSTORM TOKYONIGHTLIGHT \
-                         KANAGAWAWAVE KANAGAWADRAGON KANAGAWALOTUS MOONFLY NIGHTFLY OXOCARBON FERRA",
+                         KANAGAWAWAVE KANAGAWADRAGON KANAGAWALOTUS MOONFLY NIGHTFLY OXOCARBON FERRA \
+                         SYSTEM (follows the OS or browser color scheme)",
                     ));
                     return Some(Task::none());
                 }
                 if sub == "0" || sub == "1" {
                     self.command_line.push_error(
                         crate::t!("COLORSCHEME: 0 and 1 are COLORTHEME options. Enter a theme name (e.g. DARK, LIGHT, DRACULA) or use COLORTHEME.").as_ref(),
+                    );
+                    return Some(Task::none());
+                }
+                // SYSTEM keeps its own name in the saved config and resolves
+                // to a concrete Light/Dark theme at run time — the browser's
+                // prefers-color-scheme on the web, the Windows personalization
+                // setting natively. Re-running the command re-resolves; there
+                // is no live preference listener.
+                if upper_sub == "SYSTEM" {
+                    if self.ui_theme.name == "Custom" {
+                        self.saved_custom_palette = Some(self.ui_theme.palette);
+                    }
+                    let resolved = crate::app::config::resolve_system_theme();
+                    let name = format!("{resolved:?}");
+                    self.ui_theme.name = "System".to_string();
+                    self.ui_theme.palette =
+                        crate::app::config::UiThemePalette::from_iced(resolved.seed());
+                    self.theme_color_inputs = self.ui_theme.palette.hex_values();
+                    self.active_theme = resolved;
+                    self.sync_model_space_theme(true);
+                    self.persist_settings_if_changed();
+                    self.command_line.push_output(
+                        crate::tf!("Color scheme set to 'System' (currently {name}).").as_ref(),
                     );
                     return Some(Task::none());
                 }
@@ -630,6 +664,34 @@ impl OpenCADStudio {
                     self.command_line.push_info(&new_cmd.prompt());
                     self.tabs[i].active_cmd = Some(Box::new(new_cmd));
                 }
+            }
+
+            // MVSETUP — sheet border in model space, viewports on a layout.
+            "MVSETUP" => {
+                let scene = &mut self.tabs[i].scene;
+                let target = (scene.current_layout == "Model").then(|| {
+                    scene
+                        .layout_names()
+                        .into_iter()
+                        .find(|name| name != "Model")
+                        .unwrap_or_else(|| "Layout1".to_string())
+                });
+                // The sheet MVSETUP lays viewports out on: the layout it
+                // switches to from model space, or the current one.
+                let current = target
+                    .clone()
+                    .map(|name| std::mem::replace(&mut scene.current_layout, name));
+                let paper_bounds = scene
+                    .printable_area_limits()
+                    .or_else(|| scene.paper_limits())
+                    .unwrap_or(((0.0, 0.0), (297.0, 210.0)));
+                if let Some(current) = current {
+                    scene.current_layout = current;
+                }
+                use crate::modules::layout::mvsetup::MvsetupCommand;
+                let command = MvsetupCommand::new(target, paper_bounds);
+                self.command_line.push_info(&command.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(command));
             }
 
             // ── MSPACE / PSPACE ───────────────────────────────────────────
@@ -957,7 +1019,10 @@ impl OpenCADStudio {
                             match self.tabs[i]
                                 .scene
                                 .document
-                                .add_entity_to_layout(codec::EntityType::Viewport(vp), &layout_name)
+                                .add_entity_to_layout(
+                                    codec::EntityType::Viewport(Box::new(vp)),
+                                    &layout_name,
+                                )
                             {
                                 Ok(handle) => {
                                     self.tabs[i].scene.auto_fit_viewport(handle);
@@ -2164,7 +2229,7 @@ mod tests {
         locked_hatch.common.layer = "LOCKED_LAYER".into();
         let h_locked_hatch = app.tabs[i]
             .scene
-            .add_entity_clone(EntityType::Hatch(locked_hatch));
+            .add_entity_clone(EntityType::Hatch(Box::new(locked_hatch)));
 
         let h_line = app.tabs[i]
             .scene

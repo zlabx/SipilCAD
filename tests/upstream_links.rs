@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 /// berjalan di build web (lihat MODIFICATIONS.md dan `HIDE_UPSTREAM_LINKS` di `src/sipil.rs`).
 /// `json-schema.org` dan `schemas.microsoft.com` (ditinjau untuk v2026.41) hanya string skema JSON/XML:
 /// `mcp.rs` dan `mcp_ops.rs` tidak dikompilasi untuk web, `dwf.rs` memakainya sebagai namespace XML.
+/// `x` (ditinjau untuk v2026.42) hanya string uji `https://x` di `src/io/web_link.rs` (tautan dalam `?file=`: yang
+/// diambil URL dari pengguna, tanpa host bawaan).
 const KNOWN_HOSTS: &[&str] = &[
     "127.0.0.1",
     "3dconnexion.com",
@@ -45,6 +47,7 @@ const KNOWN_HOSTS: &[&str] = &[
     "www.reddit.com",
     "www.w3.org",
     "www.youtube.com",
+    "x",
     "youtu.be",
     "youtube.com",
 ];

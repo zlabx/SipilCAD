@@ -21,6 +21,9 @@ accepted = [
     "0BSD",
     "CC0-1.0",
     "BSL-1.0",
+    # MIT-0 (MIT tanpa kewajiban atribusi): borrow-or-share, dependensi baru sejak v2026.42 lewat
+    # jsonschema -> referencing -> fluent-uri; ditinjau Oktober 2026.
+    "MIT-0",
     # Copyleft yang ditinjau (Oktober 2026): MPL-2.0 (opencadcodec, opencadkernel, opencadgraph) dan
     # LGPL-2.1-or-later (opencadkernel-constraints) milik penulis upstream; GPL-3.0 untuk aplikasi
     # ini dan ocs_plugin_api; OFL-1.1 untuk font yang dibundel aplikasi.
