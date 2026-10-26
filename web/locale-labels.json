@@ -1,90 +1,90 @@
 {
   "ar-SA": {
-    "title": "SipilCAD — الويب",
+    "title": "SipilCAD",
     "loading": "جارٍ التحميل…"
   },
   "bg-BG": {
-    "title": "SipilCAD — Уеб",
+    "title": "SipilCAD",
     "loading": "Зареждане…"
   },
   "cs-CZ": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Načítání…"
   },
   "de-DE": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Wird geladen…"
   },
   "el-GR": {
-    "title": "SipilCAD — Ιστός",
+    "title": "SipilCAD",
     "loading": "Φόρτωση…"
   },
   "en-US": {
-    "title": "SipilCAD Web App",
+    "title": "SipilCAD",
     "loading": "Loading…"
   },
   "es-ES": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Cargando…"
   },
   "fi-FI": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Ladataan…"
   },
   "fr-FR": {
-    "title": "SipilCAD — Site Web",
+    "title": "SipilCAD",
     "loading": "Chargement…"
   },
   "hi-IN": {
-    "title": "SipilCAD — वेब",
+    "title": "SipilCAD",
     "loading": "लोड हो रहा है…"
   },
   "hu-HU": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Betöltés…"
   },
   "it-IT": {
-    "title": "SipilCAD — Rete",
+    "title": "SipilCAD",
     "loading": "Caricamento…"
   },
   "ja-JP": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "読み込み中…"
   },
   "ko-KR": {
-    "title": "SipilCAD — 웹",
+    "title": "SipilCAD",
     "loading": "로드 중…"
   },
   "lo-LA": {
-    "title": "ເວັບແອັບ SipilCAD",
+    "title": "SipilCAD",
     "loading": "ກຳລັງໂຫຼດ…"
   },
   "nl-NL": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Laden…"
   },
   "pl-PL": {
-    "title": "SipilCAD — Sieć",
+    "title": "SipilCAD",
     "loading": "Ładowanie…"
   },
   "pt-BR": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Carregando…"
   },
   "ru-RU": {
-    "title": "SipilCAD — Веб-сайт",
+    "title": "SipilCAD",
     "loading": "Загрузка…"
   },
   "tr-TR": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "Yükleniyor…"
   },
   "zh-CN": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "正在加载…"
   },
   "zh-TW": {
-    "title": "SipilCAD — Web",
+    "title": "SipilCAD",
     "loading": "載入中…"
   }
 }

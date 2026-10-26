@@ -23,7 +23,7 @@ bash scripts/sipil-tools.sh
 trunk build --locked --release --public-url ./ --dist dist/sipilcad --html-output index.html web-app.html
 
 # 3. pasca-build: bersihkan index.html, kosongkan data upstream, tulis LICENSE.txt dan SOURCE.txt, cap CACHE_VERSION di sw.js
-python3 scripts/sipil-postbuild.py dist/sipilcad --tag <tag build> --commit <sha commit> --upstream-sha <sha upstream>
+python3 scripts/sipil-postbuild.py dist/sipilcad --tag <tag build> --commit <sha commit> --upstream-sha <sha upstream> --upstream-ref <tag/ref upstream>
 
 # 4. THIRD_PARTY_LICENSES.txt (cargo-about, diverifikasi SHA-256)
 bash scripts/sipil-licenses.sh dist/sipilcad

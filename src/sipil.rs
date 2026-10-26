@@ -25,8 +25,9 @@ pub const FONT_PATH: &str = "OFL-PTSans.txt";
 /// di depan nomor; naikkan di sini bila SipilCAD merilis versi baru.
 pub const APP_VERSION: &str = "2027.0";
 
-/// Kalimat singkat di bawah nama produk pada dialog About (pengganti "CAD application for Architecture & Engineering").
-pub const ABOUT_TAGLINE: &str = "CAD for civil engineers";
+/// Kalimat di bawah nama produk pada dialog About (pengganti "CAD application for Architecture & Engineering"). Satu kalimat;
+/// bila lebih lebar dari kartu atas, teks membungkus ke baris kedua.
+pub const ABOUT_TAGLINE: &str = "Professional 2D/3D CAD software for architecture & engineering";
 
 /// Dialog About hanya menampilkan kartu atas (logo, nama, kalimat, versi) dan baris tombol bawah; kartu versi/platform/arch,
 /// build/commit/profile, dan baris CPU/RAM/GPU disembunyikan sehingga jendelanya lebih pendek. Info yang sama tetap ada di teks
@@ -122,11 +123,13 @@ mod tests {
         );
     }
 
-    /// Kalimat About singkat (satu baris di bawah nama) dan tidak memakai teks upstream.
+    /// Kalimat About: satu kalimat pendek (paling banyak dua baris di kartu atas), tanpa spasi di ujung, dan bukan teks upstream.
     #[test]
-    fn about_tagline_is_short_and_not_upstream() {
-        assert!(!ABOUT_TAGLINE.trim().is_empty() && ABOUT_TAGLINE.chars().count() <= 40, "{ABOUT_TAGLINE}");
-        assert!(!ABOUT_TAGLINE.contains("Architecture & Engineering"));
+    fn about_tagline_is_one_short_sentence_and_not_upstream() {
+        assert!(!ABOUT_TAGLINE.trim().is_empty() && ABOUT_TAGLINE == ABOUT_TAGLINE.trim(), "{ABOUT_TAGLINE:?}");
+        assert!(ABOUT_TAGLINE.chars().count() <= 80, "{ABOUT_TAGLINE}");
+        assert!(!ABOUT_TAGLINE.ends_with('.') && !ABOUT_TAGLINE.contains('\n'), "{ABOUT_TAGLINE}");
+        assert!(!ABOUT_TAGLINE.eq_ignore_ascii_case("CAD application for Architecture & Engineering"));
         assert!(!ABOUT_TAGLINE.to_ascii_lowercase().contains("open cad studio"));
     }
 

@@ -8,14 +8,15 @@ Tidak menyentuh kode aplikasi dan tidak mengubah berkas .wasm. Yang dikerjakan p
      tetap ber-integrity.
   2. tulis `[]` ke supporters.json, videos.json, dan discussions.json, supaya aplikasi tidak memuat
      data atau gambar dari layanan pihak ketiga saat dibuka.
-  3. salin LICENSE menjadi LICENSE.txt dan isi SOURCE.txt dari SOURCE.txt.in.
+  3. salin LICENSE menjadi LICENSE.txt dan isi SOURCE.txt dari SOURCE.txt.in (tag, commit, versi SipilCAD yang dibaca
+     dari src/sipil.rs, dan acuan upstream terisi otomatis; tidak ada angka yang ditulis tangan).
   4. beri cap `CACHE_VERSION` di sw.js (service worker PWA upstream, sejak v2026.42) dengan hash seluruh
      bundle. Di upstream cap itu dipasang oleh workflow Pages mereka, yang tidak kita pakai. Tanpa cap
      nama cache selalu "v1": cache browser pengguna tidak pernah dibersihkan (wasm ~55 MiB tiap deploy
      menumpuk) dan berkas tanpa hash (ocs-parse-worker.js, locale-labels.json, ...) basi satu kunjungan
      setelah deploy. Langkah ini paling akhir, setelah semua berkas lain final.
 Lalu memeriksa bahwa hasilnya sesuai harapan (gagal keras bila tidak): tepat satu *_bg.wasm, meta
-robots noindex ada, judul tab dan splash sudah SipilCAD, tidak ada sisa nama upstream di
+robots noindex ada, judul tab (<title> dan tiap bahasa di locale-labels.json) tepat "SipilCAD", splash sudah SipilCAD, tidak ada sisa nama upstream di
 locale-labels.json, app.webmanifest, dan sw.js, serta cap sw.js terpasang tepat satu kali.
 """
 import argparse
@@ -37,6 +38,8 @@ ROBOTS_META_RE = re.compile(r"""<meta\b[^>]*\bname\s*=\s*(["'])robots\1[^>]*>"""
 CONTENT_ATTR_RE = re.compile(r"""\bcontent\s*=\s*(["'])(.*?)\1""", re.IGNORECASE | re.DOTALL)
 NOINDEX_RE = re.compile(r"\b(?:noindex|none)\b", re.IGNORECASE)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+TAB_TITLE = "SipilCAD"  # judul tab: hanya nama produk, di semua bahasa
+APP_VERSION_RE = re.compile(r'^pub const APP_VERSION: &str = "([^"]+)";', re.MULTILINE)
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 # The splash shows the product name in its own element (patch 0009): <div class="splash-product">SipilCAD</div>.
 # sw.js (patch 0011 menjaga namanya, upstream menyimpan penanda): `const CACHE_VERSION = "v1"; // stamped by ...`.
@@ -113,16 +116,17 @@ def process_index(text):
 
 def check_branding(index_text, labels_path):
     t = TITLE_RE.search(index_text)
-    if not t or UPSTREAM_NAME in t.group(1):
-        fail(f"<title> masih memuat '{UPSTREAM_NAME}' atau tidak ada; patch 0008 tidak terpasang?")
+    if not t or t.group(1).strip() != TAB_TITLE:
+        fail(f"<title> bukan tepat '{TAB_TITLE}' ({t.group(1).strip()!r} jika ada); patch 0008 tidak terpasang?" if t
+             else f"<title> tidak ada; patch 0008 tidak terpasang?")
     if not SPLASH_OK_RE.search(index_text):
         fail("teks splash bukan 'SipilCAD' (elemen splash-product); patch 0008/0009 tidak terpasang atau templat upstream berubah?")
     if not Path(labels_path).exists():
         fail("locale-labels.json tidak ada di hasil build")
     labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))
-    left = [k for k, v in labels.items() if isinstance(v, dict) and UPSTREAM_NAME in str(v.get("title", ""))]
+    left = [k for k, v in labels.items() if not isinstance(v, dict) or v.get("title") != TAB_TITLE]
     if left:
-        fail(f"judul locale masih memuat '{UPSTREAM_NAME}': {', '.join(left[:5])}; apply.sh tidak menggantinya?")
+        fail(f"judul locale bukan tepat '{TAB_TITLE}': {', '.join(left[:5])}; apply.sh tidak menggantinya?")
     return len(labels)
 
 
@@ -185,6 +189,25 @@ def stamp_service_worker(dist):
     return stamp
 
 
+def read_app_version(root):
+    """Versi SipilCAD dari `APP_VERSION` di src/sipil.rs (satu-satunya sumber; dialog About memakai konstanta yang sama)."""
+    f = Path(root) / "src" / "sipil.rs"
+    if not f.is_file():
+        fail(f"{f} tidak ada (overlay src/sipil.rs)")
+    m = APP_VERSION_RE.search(f.read_text(encoding="utf-8"))
+    if not m:
+        fail("APP_VERSION tidak ditemukan di src/sipil.rs")
+    return m.group(1)
+
+
+def upstream_label(ref, sha):
+    """\"v2026.42, commit <sha>\" bila ref berupa nama (tag/cabang); \"commit <sha>\" bila ref kosong atau hanya SHA."""
+    ref = (ref or "").strip()
+    if not ref or ref == sha or sha.startswith(ref):
+        return f"commit {sha}"
+    return f"{ref}, commit {sha}"
+
+
 def render_source(template, values):
     text = template
     for key, value in values.items():
@@ -203,6 +226,7 @@ def main(argv=None):
     ap.add_argument("--commit", required=True, help="SHA commit di repo sumber untuk build ini")
     ap.add_argument("--upstream", default="HakanSeven12/OpenCADStudio")
     ap.add_argument("--upstream-sha", required=True)
+    ap.add_argument("--upstream-ref", default="", help="tag atau cabang upstream yang dibangun (UPSTREAM_REF); opsional")
     ap.add_argument("--source-repo", default="zlabx/SipilCAD")
     a = ap.parse_args(argv)
 
@@ -225,12 +249,14 @@ def main(argv=None):
     if not lic.is_file():
         fail(f"{lic} tidak ada")
     (dist / "LICENSE.txt").write_bytes(lic.read_bytes())  # .txt: LICENSE tanpa ekstensi bisa terunduh, bukan tampil
+    app_version = read_app_version(root)
     tpl = root / "SOURCE.txt.in"
     if not tpl.is_file():
         fail(f"{tpl} tidak ada")
     (dist / "SOURCE.txt").write_text(render_source(tpl.read_text(encoding="utf-8"), {
         "TAG": a.tag, "COMMIT": a.commit, "SOURCE_REPO": a.source_repo,
         "UPSTREAM": a.upstream, "UPSTREAM_SHA": a.upstream_sha, "WASM": wasm.name,
+        "VERSION": app_version, "UPSTREAM_AT": upstream_label(a.upstream_ref, a.upstream_sha),
     }), encoding="utf-8")
 
     stamp = stamp_service_worker(dist)  # paling akhir: semua berkas lain sudah final
@@ -238,11 +264,11 @@ def main(argv=None):
     note(f"wasm utama {wasm.name}: {wasm.stat().st_size / 1048576:.2f} MiB")
     note(f"index.html: integrity dihapus dari {stripped} preload wasm; "
          f"{modulepreload_integrity_count(text)} modulepreload JS tetap ber-integrity; noindex ada")
-    note(f"branding: judul tab dan splash SipilCAD; {nlabels} locale tanpa nama upstream; PWA bernama {pwa_name!r}")
+    note(f"branding: judul tab \"{TAB_TITLE}\" ({nlabels} locale); splash SipilCAD; PWA bernama {pwa_name!r}")
     note(f"sw.js: CACHE_VERSION = {stamp} (hash bundle)")
     note("data upstream dikosongkan: " + ", ".join(
         f"{n} ({'baru' if b is None else ('tidak valid' if b < 0 else f'{b} entri')} -> 0)" for n, b in blanked))
-    note("LICENSE.txt dan SOURCE.txt ditulis")
+    note(f"LICENSE.txt dan SOURCE.txt ditulis (SipilCAD {app_version})")
 
 
 if __name__ == "__main__":

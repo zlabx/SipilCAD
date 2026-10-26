@@ -97,7 +97,8 @@ pub struct UiThemeConfig {
 
 impl Default for UiThemeConfig {
     fn default() -> Self {
-        let theme = iced::Theme::Oxocarbon;
+        // SIPIL: tema bawaan SipilCAD adalah terang (upstream: Oxocarbon, gelap).
+        let theme = iced::Theme::Light;
         Self {
             name: theme.to_string(),
             palette: UiThemePalette::from_iced(theme.seed()),
@@ -112,7 +113,8 @@ impl UiThemeConfig {
         } else if self.name.eq_ignore_ascii_case("System") {
             resolve_system_theme()
         } else {
-            builtin_theme(&self.name).unwrap_or(iced::Theme::Oxocarbon)
+            // SIPIL: nama tema tak dikenal kembali ke tema bawaan SipilCAD (terang).
+            builtin_theme(&self.name).unwrap_or(iced::Theme::Light)
         }
     }
 }
@@ -193,7 +195,8 @@ pub struct UiThemePalette {
 
 impl Default for UiThemePalette {
     fn default() -> Self {
-        Self::from_iced(iced::Theme::Oxocarbon.seed())
+        // SIPIL: palet bawaan mengikuti tema bawaan SipilCAD (terang).
+        Self::from_iced(iced::Theme::Light.seed())
     }
 }
 
@@ -613,6 +616,18 @@ fn config_path() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SIPIL: tema bawaan SipilCAD terang; nama tak dikenal dan palet bawaan ikut tema itu.
+    #[test]
+    fn sipil_default_theme_is_light() {
+        let cfg = UiThemeConfig::default();
+        assert_eq!(cfg.name, "Light");
+        assert_eq!(cfg.to_iced(), iced::Theme::Light);
+        let mut unknown = UiThemeConfig::default();
+        unknown.name = "no-such-theme".to_string();
+        assert_eq!(unknown.to_iced(), iced::Theme::Light);
+        assert!(UiThemePalette::default() == UiThemePalette::from_iced(iced::Theme::Light.seed()));
+    }
 
     #[test]
     fn system_scheme_resolves_to_a_concrete_theme_and_keeps_its_name() {
