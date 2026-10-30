@@ -534,26 +534,26 @@ impl OpenCADStudio {
                     .map(|(_, e)| e.common().layer.clone())
                     .collect();
                 if sel_layers.is_empty() {
-                    self.command_line.push_error(
-                        crate::t!("LAYISO: select entities on the layers to isolate first.")
-                            .as_ref(),
-                    );
+                    use crate::modules::draw::select::SelectObjectsCommand;
+                    let cmd = SelectObjectsCommand::new("LAYISO");
+                    self.command_line.push_info(&cmd.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(cmd));
                 } else {
                     let names: Vec<String> = self.tabs[i]
                         .scene
                         .document
                         .layers
                         .iter()
+                        .filter(|l| !sel_layers.contains(&l.name) && !l.is_off())
                         .map(|l| l.name.clone())
                         .collect();
                     let undo = self.begin_layer_undo(i, "LAYISO", &names);
                     for name in &names {
-                        if !sel_layers.contains(name) {
-                            if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
-                                dl.turn_off();
-                            }
+                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
+                            dl.turn_off();
                         }
                     }
+                    self.tabs[i].layiso_turned_off = Some(names.clone());
                     self.tabs[i].scene.invalidate_layer_visibility(&names);
                     self.tabs[i].dirty = true;
                     self.commit_layer_undo(i, undo);
@@ -626,18 +626,17 @@ impl OpenCADStudio {
                 }
             }
 
-            // LAYUNISO — restore all layers that were turned off by LAYISO (turn all on)
+            // LAYUNISO — turn back on the layers the last LAYISO turned off
             "LAYUNISO" => {
-                let names: Vec<String> = self.tabs[i]
-                    .scene
-                    .document
-                    .layers
-                    .iter()
-                    .map(|l| l.name.clone())
-                    .collect();
+                let Some(names) = self.tabs[i].layiso_turned_off.take() else {
+                    self.command_line.push_info(
+                        crate::t!("LAYUNISO: no layers were isolated by LAYISO.").as_ref(),
+                    );
+                    return Some(Task::none());
+                };
                 let undo = self.begin_layer_undo(i, "LAYUNISO", &names);
                 for name in &names {
-                    if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(&name) {
+                    if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
                         dl.turn_on();
                     }
                 }
@@ -1189,8 +1188,9 @@ impl OpenCADStudio {
     /// touched. Inside a layout viewport the state applies to that viewport
     /// alone: its frozen layers become the viewport's freezes, and colour,
     /// linetype, lineweight and transparency become viewport overrides where
-    /// they differ from the layer. On / off, lock and plot have no
-    /// per-viewport form and apply to the drawing.
+    /// they differ from the layer. Layers the state turns off are frozen in
+    /// the viewport; lock and plot have no per-viewport form and apply to the
+    /// drawing.
     pub(in crate::app) fn restore_layer_state_here(&mut self, i: usize, name: &str) -> usize {
         use codec::layer_state::LayerStateMask as Mask;
         use codec::objects::{KnownXRecordKind as Kind, XRecordValue as Value};
@@ -1231,9 +1231,6 @@ impl OpenCADStudio {
                 continue;
             };
             restored += 1;
-            if state.mask.contains(Mask::ON) {
-                layer.flags.off = saved.off;
-            }
             if state.mask.contains(Mask::LOCKED) {
                 layer.flags.locked = saved.locked;
             }
@@ -1244,8 +1241,14 @@ impl OpenCADStudio {
                 layer.flags.frozen_in_new_viewport = saved.new_viewport_frozen;
             }
             let layer = layer.clone();
-            if state.mask.contains(Mask::FROZEN) {
-                if saved.frozen { &mut freeze } else { &mut thaw }.push(layer.handle);
+            // On / off has no per-viewport form; a layer the state turns off
+            // is frozen in this viewport instead, so other viewports keep
+            // their own visibility.
+            let (by_freeze, by_off) =
+                (state.mask.contains(Mask::FROZEN), state.mask.contains(Mask::ON));
+            if by_freeze || by_off {
+                let hidden = (by_freeze && saved.frozen) || (by_off && saved.off);
+                if hidden { &mut freeze } else { &mut thaw }.push(layer.handle);
             }
             // (kind, saved value, whether it differs from the layer's own)
             let mut overrides: Vec<(Kind, Option<Value>, bool)> = Vec::new();

@@ -12,8 +12,10 @@ pub mod brep_build;
 pub mod fbx;
 pub mod file_association;
 pub mod font_repo;
+pub mod georef;
 pub(crate) mod fs_access;
 pub mod iges_import;
+pub mod iges_surfaces;
 pub mod line_read;
 pub mod linetypes;
 pub mod model_import;
@@ -34,6 +36,7 @@ pub mod step_import;
 pub mod stl;
 pub mod svg_export;
 pub mod tds_import;
+pub mod tds_legacy;
 pub mod thumbnail;
 pub mod update_check;
 pub mod visual_styles;
@@ -790,12 +793,15 @@ async fn load_web_bytes(
     let mut doc = outcome.document;
     normalize_block_origins(&mut doc);
     if name.to_ascii_lowercase().ends_with(".dxf") {
-        fix_dxf_dimension_rotations(&mut doc);
         fix_dxf_layout_plot_settings(&mut doc);
     }
     fix_viewport_status_flags(&mut doc);
+    fix_double_placed_dimension_pictures(&mut doc);
     fix_current_style_names(&mut doc);
     crate::entities::field::local_header_dates(&mut doc);
+    // Opening is a field evaluation event (FIELDEVAL bit 1), as on the
+    // native open: object-property fields show the drawing's own state.
+    crate::entities::field::update_fields(&mut doc, 1, None);
     progress.set(crate::app::OPEN_PHASE_CACHING, 7000, 0, 1);
     if recovery_mode {
         repair_drawing(&mut doc);
@@ -828,10 +834,10 @@ async fn parse_web_document(name: &str, bytes: &[u8]) -> Result<CadDocument, Str
     let mut doc = outcome.document;
     normalize_block_origins(&mut doc);
     if name.to_ascii_lowercase().ends_with(".dxf") {
-        fix_dxf_dimension_rotations(&mut doc);
         fix_dxf_layout_plot_settings(&mut doc);
     }
     fix_viewport_status_flags(&mut doc);
+    fix_double_placed_dimension_pictures(&mut doc);
     fix_current_style_names(&mut doc);
     Ok(doc)
 }
@@ -963,6 +969,7 @@ pub fn load_bytes(name: &str, bytes: Vec<u8>) -> Result<CadDocument, String> {
                 .read()
                 .map_err(|e| e.to_string())?;
             fix_viewport_status_flags(&mut doc);
+            fix_double_placed_dimension_pictures(&mut doc);
             fix_current_style_names(&mut doc);
             crate::entities::field::local_header_dates(&mut doc);
             Ok(doc)
@@ -972,9 +979,9 @@ pub fn load_bytes(name: &str, bytes: Vec<u8>) -> Result<CadDocument, String> {
                 .map_err(|e| e.to_string())?
                 .read()
                 .map_err(|e| e.to_string())?;
-            fix_dxf_dimension_rotations(&mut doc);
             fix_dxf_layout_plot_settings(&mut doc);
             fix_viewport_status_flags(&mut doc);
+            fix_double_placed_dimension_pictures(&mut doc);
             fix_current_style_names(&mut doc);
             crate::entities::field::local_header_dates(&mut doc);
             Ok(doc)
@@ -1044,13 +1051,21 @@ pub fn load_file(_path: &Path) -> Result<CadDocument, String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load_file_with_progress(
     path: &Path,
-    _progress: Option<Arc<dyn Fn(u16) + Send + Sync>>,
+    progress: Option<Arc<dyn Fn(u16) + Send + Sync>>,
 ) -> Result<codec::ReadOutcome, String> {
-    let outcome = read_file_attempt(path, _progress, false).map_err(|failure| failure.message)?;
-    if !outcome.stats.has_usable_drawing_data() {
-        return Err("initial read returned no source drawing records".to_string());
+    // Headless reads (--export, xrefs, imports) have no recovery prompt:
+    // fall back to the recovery read as soon as the strict one fails.
+    match load_file_for_open(path, progress.clone(), &OpenAttempt::Strict) {
+        Ok(outcome) => Ok(outcome),
+        Err(failure) if failure.recoverable => {
+            let attempt = OpenAttempt::Recovery(failure.message, failure.read_stats);
+            let mut outcome =
+                load_file_for_open(path, progress, &attempt).map_err(|failure| failure.message)?;
+            repair_drawing(&mut outcome.document);
+            Ok(outcome)
+        }
+        Err(failure) => Err(failure.message),
     }
-    finalize_loaded_outcome(path, outcome)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1243,10 +1258,10 @@ fn finalize_loaded_outcome(
     normalize_block_origins(doc);
     materialize_missing_block_markers(doc);
     if outcome.stats.source_format == Some(codec::SourceFormat::Dxf) {
-        fix_dxf_dimension_rotations(doc);
         fix_dxf_layout_plot_settings(doc);
     }
     fix_viewport_status_flags(doc);
+    fix_double_placed_dimension_pictures(doc);
     fix_current_style_names(doc);
     crate::entities::field::local_header_dates(doc);
     resolve_raster_image_paths(doc, path.parent());
@@ -1590,7 +1605,14 @@ pub(crate) fn resolve_image_file(raw: &str, base_dir: Option<&Path>) -> Option<S
         return Some(raw.to_string());
     }
     let base_dir = base_dir?;
-    let joined = base_dir.join(raw);
+    // A relative path written on Windows (`.\images\a.tif`) keeps its
+    // backslashes on other systems, where they are not separators.
+    let relative = if cfg!(windows) {
+        std::borrow::Cow::Borrowed(raw)
+    } else {
+        std::borrow::Cow::Owned(raw.replace('\\', "/"))
+    };
+    let joined = base_dir.join(&*relative);
     if joined.is_file() {
         return Some(joined.to_string_lossy().into_owned());
     }
@@ -1968,14 +1990,19 @@ mod save_failure_tests {
 /// picked from outside the plot styles folder is copied into it (unless a
 /// file of that name is already there), so the dialog lists it from now on
 /// and page setups naming it resolve after a restart.
-/// Pick a `.lin` linetype definition file and return its text (#1588).
-pub async fn pick_linetype_file() -> Option<String> {
+/// Pick a `.lin` linetype definition file and return its folder (where the
+/// shape files it names are looked for; none on the web) and text (#1588).
+pub async fn pick_linetype_file() -> Option<(Option<std::path::PathBuf>, String)> {
     let handle = crate::sys::file_dialog()
         .set_title(crate::t!("Load Linetypes").as_ref())
         .add_filter(crate::t!("Linetype Files").as_ref(), &["lin", "LIN"])
         .pick_file()
         .await?;
-    Some(String::from_utf8_lossy(&handle.read().await).into_owned())
+    #[cfg(not(target_arch = "wasm32"))]
+    let dir = handle.path().parent().map(Path::to_path_buf);
+    #[cfg(target_arch = "wasm32")]
+    let dir = None;
+    Some((dir, String::from_utf8_lossy(&handle.read().await).into_owned()))
 }
 
 pub async fn pick_plot_style() -> Result<Option<plot_style::PlotStyleTable>, String> {
@@ -2085,6 +2112,31 @@ pub async fn pick_image_file() -> Result<(PathBuf, u32, u32), String> {
     Ok((path, decoded.source_width, decoded.source_height))
 }
 
+/// INSERTOBJ: the system Insert Object window, then the file it names is
+/// prepared for embedding. A picture from a file is what can be embedded;
+/// elsewhere than Windows the file picker stands in for the window.
+pub async fn pick_insert_object() -> Result<ole_embed::EmbeddedImage, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let (tx, rx) = iced::futures::channel::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(ole_embed::insert_object_dialog());
+        });
+        let path = rx.await.map_err(|_| "Cancelled".to_string())??;
+        ole_embed::EmbeddedImage::from_file(&path).map_err(|_| {
+            format!(
+                "\"{}\" {}",
+                path.display(),
+                crate::tr!("ole-props", "not-embeddable")
+            )
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        pick_embedded_image_file().await
+    }
+}
+
 /// Pick an image file and prepare it for embedding (IMAGEEMBED). The bytes
 /// are read before returning so the OLE2FRAME payload is ready to place.
 pub async fn pick_embedded_image_file() -> Result<ole_embed::EmbeddedImage, String> {
@@ -2177,6 +2229,9 @@ where
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let write_started = iced::time::Instant::now();
+    if ext == "dxf" {
+        crate::entities::spline::complete_nurbs_for_dxf(&mut doc);
+    }
     let result = match ext.as_str() {
         "dxf" => DxfWriter::new(&doc)
             .write_to_file(&temp_path)
@@ -2684,6 +2739,69 @@ pub(crate) fn repair_drawing(doc: &mut CadDocument) {
     }
 }
 
+/// Dimensions an older build rotated kept the rotation twice: in their
+/// picture block's geometry and again as the picture's insertion rotation
+/// (DXF 54), so the picture drew turned about the origin, away from the
+/// dimension. A picture that lies at the definition point as stored, and
+/// far from it once placed, drops its placement.
+fn fix_double_placed_dimension_pictures(doc: &mut CadDocument) {
+    let mut doubled = Vec::new();
+    for entity in doc.entities() {
+        let EntityType::Dimension(dimension) = entity else {
+            continue;
+        };
+        let base = dimension.base();
+        let Some(placement) = crate::scene::render_graph::dimension_picture_placement(base)
+        else {
+            continue;
+        };
+        let Some(record) = doc.block_records.get(&base.block_name) else {
+            continue;
+        };
+        let target = base.definition_point;
+        // The picture's lines (a point as a zero-length one).
+        let segments: Vec<[codec::types::Vector3; 2]> = record
+            .entity_handles
+            .iter()
+            .filter_map(|handle| match doc.get_entity(*handle) {
+                Some(EntityType::Line(line)) => Some([line.start, line.end]),
+                Some(EntityType::Point(point)) => Some([point.location, point.location]),
+                _ => None,
+            })
+            .collect();
+        // The picture's nearest approach to the definition point.
+        let gap = |placed: bool| {
+            segments
+                .iter()
+                .map(|[a, b]| {
+                    let (a, b) = if placed {
+                        (placement.apply(*a), placement.apply(*b))
+                    } else {
+                        (*a, *b)
+                    };
+                    let along = b - a;
+                    let length = along.dot(&along);
+                    let t = if length > 0.0 {
+                        ((target - a).dot(&along) / length).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    (a + along * t).distance(&target)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let (stored, placed) = (gap(false), gap(true));
+        if stored.is_finite() && stored * 10.0 < placed {
+            doubled.push(base.common.handle);
+        }
+    }
+    for handle in doubled {
+        if let Some(entity) = doc.get_entity_mut(handle) {
+            crate::scene::render_graph::clear_dim_picture_placement(entity);
+        }
+    }
+}
+
 /// opencadcodec's ViewportStatusFlags::from_bits() maps bit 0 → is_on and bit 15 → locked,
 /// but the real DXF/DWG spec uses bit 15 (0x8000) → viewport on and bit 14 (0x4000) → locked.
 /// Files from AutoCAD and other tools always set bit 15 for active viewports, leaving bit 0
@@ -2698,21 +2816,6 @@ fn fix_viewport_status_flags(doc: &mut CadDocument) {
                 vp.turn_on();
                 vp.status.locked = (bits & 0x4000) != 0;
             }
-        }
-    }
-}
-
-/// The opencadcodec DXF reader still stores Shape rotation directly from group
-/// code 50 in degrees, while DWG and our own creation code store radians.
-/// Dimension angles and ATTRIB/ATTDEF rotation are converted inside the
-/// reader, so arms for them here would convert twice.
-fn fix_dxf_dimension_rotations(doc: &mut CadDocument) {
-    for entity in doc.entities_mut() {
-        match entity {
-            EntityType::Shape(s) => {
-                s.rotation = s.rotation.to_radians();
-            }
-            _ => {}
         }
     }
 }

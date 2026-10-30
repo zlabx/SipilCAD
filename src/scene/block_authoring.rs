@@ -1,6 +1,7 @@
 //! Shared native graph construction for Block Editor authoring objects.
 pub(crate) mod graph;
 pub(crate) mod edit;
+pub(crate) mod metadata;
 use codec::objects::{
     BlockEvalExpression, BlockEvalValue, DynamicBlockData, DynamicBlockObject, ObjectType,
 };
@@ -22,6 +23,77 @@ pub(super) struct Slots {
     pub edge: i32,
 }
 
+type PublishedOwners = Vec<(usize, usize, std::sync::Arc<rustc_hash::FxHashSet<Handle>>)>;
+
+/// Documents whose dictionary owners are published: (address, guards, owners).
+static PUBLISHED: std::sync::RwLock<PublishedOwners> = std::sync::RwLock::new(Vec::new());
+
+/// The owners of every dictionary in a document, published for as long as
+/// this guard borrows it, so nothing can change them meanwhile.
+///
+/// Resolving a block's extension dictionary scans every object when the block
+/// has none (most blocks), and every INSERT placement asks for its block's
+/// base point: a drawing with half a million entities spent minutes there
+/// (#2023). Batch walks publish the owners once; [`definition_dictionary`]
+/// then answers "none" for an unowned block straight away, on any thread.
+pub(crate) struct DictionaryOwners<'a> {
+    address: usize,
+    _document: std::marker::PhantomData<&'a CadDocument>,
+}
+
+impl<'a> DictionaryOwners<'a> {
+    pub(crate) fn publish(document: &'a CadDocument) -> Self {
+        let address = document as *const CadDocument as usize;
+        let mut published = PUBLISHED.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = published.iter_mut().find(|entry| entry.0 == address) {
+            entry.1 += 1;
+        } else {
+            let owners = document
+                .objects
+                .values()
+                .filter_map(|object| match object {
+                    ObjectType::Dictionary(dictionary) => Some(dictionary.owner),
+                    _ => None,
+                })
+                .collect();
+            published.push((address, 1, std::sync::Arc::new(owners)));
+        }
+        Self {
+            address,
+            _document: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Drop for DictionaryOwners<'_> {
+    fn drop(&mut self) {
+        let mut published = PUBLISHED.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = published.iter().position(|entry| entry.0 == self.address) {
+            published[at].1 -= 1;
+            if published[at].1 == 0 {
+                published.swap_remove(at);
+            }
+        }
+    }
+}
+
+/// A block definition's extension dictionary. Skips the whole-document scan
+/// [`CadDocument::extension_dictionary_handle`] falls back to when the
+/// document's dictionary owners are published and none is `definition`.
+pub(crate) fn definition_dictionary(document: &CadDocument, definition: Handle) -> Option<Handle> {
+    let address = document as *const CadDocument as usize;
+    let unowned = PUBLISHED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|entry| entry.0 == address)
+        .is_some_and(|entry| !entry.2.contains(&definition));
+    if unowned {
+        return None;
+    }
+    document.extension_dictionary_handle(definition)
+}
+
 /// Resolve a graph without touching it. Reject malformed/opaque relationships
 /// before opening a history transaction or allocating any new native objects.
 pub(super) fn graph(
@@ -35,7 +107,7 @@ pub(super) fn graph(
     {
         return Err("The block definition is no longer available.");
     }
-    let Some(dictionary) = document.extension_dictionary_handle(definition) else {
+    let Some(dictionary) = definition_dictionary(document, definition) else {
         return Ok(None);
     };
     let Some(ObjectType::Dictionary(record)) = document.objects.get(&dictionary) else {
@@ -375,6 +447,50 @@ pub(super) fn dynamic(
     object
 }
 
+/// `definition`'s object graph, for a copy of the definition to carry. A
+/// draw-order table or associative network beside a dynamic block's graph
+/// holds objects the export cannot move, and one of them used to drop the
+/// whole graph, parameters and actions included; leave those two behind
+/// instead.
+pub(crate) fn export_graph(
+    document: &CadDocument,
+    definition: Handle,
+) -> Option<codec::BlockGraph> {
+    if let Some(graph) = document.export_block_graph(definition) {
+        return Some(graph);
+    }
+    let root = document.extension_dictionary_handle(definition)?;
+    let Some(ObjectType::Dictionary(dictionary)) = document.objects.get(&root) else {
+        return None;
+    };
+    if !dictionary.entries.iter().any(|(key, _)| key == "ACAD_ENHANCEDBLOCK") {
+        return None;
+    }
+    let left = |key: &str| matches!(key, "ACAD_SORTENTS" | "ACAD_ASSOCNETWORK");
+    let dropped: Vec<Handle> = dictionary
+        .entries
+        .iter()
+        .filter(|(key, _)| left(key))
+        .map(|(_, handle)| *handle)
+        .collect();
+    // Other graph objects may still name them (reactors), so drop the
+    // objects themselves, not just their entries.
+    let gone: Vec<Handle> = document
+        .objects
+        .keys()
+        .copied()
+        .filter(|handle| dropped.iter().any(|top| document.owner_chain_reaches(*handle, *top)))
+        .collect();
+    let mut document = document.clone();
+    for handle in gone {
+        document.objects.remove(&handle);
+    }
+    if let Some(ObjectType::Dictionary(dictionary)) = document.objects.get_mut(&root) {
+        dictionary.entries.retain(|(key, _)| !left(key));
+    }
+    document.export_block_graph(definition)
+}
+
 pub(crate) fn members(document: &CadDocument, definition: Handle) -> Vec<Handle> {
     document
         .block_records
@@ -459,6 +575,20 @@ pub(crate) fn retag_members(document: &mut CadDocument, definition: Handle) {
             }
         }
     }
+}
+
+/// A copied definition owns its identity even when its evaluation IDs are retained.
+pub(crate) fn refresh_copied_identity(document: &mut CadDocument, definition: Handle, name: &str) {
+    if !matches!(graph(document, definition), Ok(Some(_))) {
+        return;
+    }
+    let mut true_name = ExtendedDataRecord::new(TRUE_NAME);
+    true_name.add_value(XDataValue::String(name.to_owned()));
+    document.set_object_xdata_record(definition, true_name);
+    let mut guid = ExtendedDataRecord::new(GUID);
+    guid.add_value(XDataValue::String(new_guid()));
+    document.set_object_xdata_record(definition, guid);
+    retag_members(document, definition);
 }
 
 /// Give every object of the definition its element tag, numbering the new

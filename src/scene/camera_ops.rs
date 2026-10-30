@@ -90,8 +90,9 @@ fn rendered_wire_bounds(
 }
 
 /// Merge `pair` into `bounds`, dropping coordinates that are parser junk
-/// rather than geometry: DXF writes ±1e20 as its "no extents" sentinel, and
-/// past 1e16 an f32 has no resolution left to place a point with.
+/// rather than geometry: DXF writes ±1e20 as its "no extents" sentinel,
+/// past 1e16 an f32 has no resolution left to place a point with, and a
+/// NaN or infinite corner frames nothing.
 fn fold_sane_bounds(
     bounds: &mut Option<(glam::DVec3, glam::DVec3)>,
     pair: Option<(glam::DVec3, glam::DVec3)>,
@@ -100,17 +101,16 @@ fn fold_sane_bounds(
     let Some((lo, hi)) = pair else {
         return;
     };
-    if lo.abs().max_element() >= SANE_EXTENT || hi.abs().max_element() >= SANE_EXTENT {
+    if !(lo.is_finite() && hi.is_finite())
+        || lo.abs().max_element() >= SANE_EXTENT
+        || hi.abs().max_element() >= SANE_EXTENT
+    {
         return;
     }
     *bounds = Some(match *bounds {
         Some((min, max)) => (min.min(lo), max.max(hi)),
         None => (lo, hi),
     });
-}
-
-fn rendered_wire_center(wires: &[WireModel], fallback_z: f64) -> Option<glam::DVec3> {
-    rendered_wire_bounds(wires, fallback_z).map(|(min, max)| (min + max) * 0.5)
 }
 
 fn block_entity_transform(
@@ -648,6 +648,27 @@ impl Scene {
         self.last_render_aspect.get().max(0.01)
     }
 
+    /// Pixel size of the active camera's render rectangle: the active model
+    /// pane, or the whole canvas in a layout. `None` before the first frame.
+    pub(super) fn active_camera_pixels(&self) -> Option<(f32, f32)> {
+        let (canvas_w, canvas_h) = self.selection.borrow().view.vp_size;
+        let (width, height) = if self.current_layout == "Model" {
+            let tiles = self.model_tiles.borrow();
+            let active = self
+                .active_model_tile
+                .get()
+                .min(tiles.len().saturating_sub(1));
+            match tiles.get(active) {
+                Some(tile) => (tile.rect.width * canvas_w, tile.rect.height * canvas_h),
+                None => (canvas_w, canvas_h),
+            }
+        } else {
+            (canvas_w, canvas_h)
+        };
+        (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
+            .then_some((width, height))
+    }
+
     /// Fit the camera to a world-space bounding box (corners p1, p2).
     pub fn zoom_to_window(&mut self, p1: glam::Vec3, p2: glam::Vec3) {
         let min = p1.min(p2);
@@ -685,9 +706,14 @@ impl Scene {
             });
         }
 
-        let Some((mut min, mut max)) = bounds else {
+        let Some((min, max)) = bounds else {
             return false;
         };
+        self.fit_active_view(min, max)
+    }
+
+    /// Fit the active view (model camera or the active viewport) to a world box.
+    fn fit_active_view(&mut self, mut min: glam::DVec3, mut max: glam::DVec3) -> bool {
         if min == max {
             min -= glam::DVec3::splat(1.0);
             max += glam::DVec3::splat(1.0);
@@ -701,26 +727,50 @@ impl Scene {
             return self.fit_active_viewport_to_bounds(min, max);
         }
         let aspect = self.active_camera_aspect();
-        self.camera.borrow_mut().fit_to_bounds(min, max, aspect);
+        let pixels = self.active_camera_pixels();
+        self.camera
+            .borrow_mut()
+            .fit_to_bounds_bordered_f32(min, max, aspect, pixels);
         self.projection_bounds_epoch.set(self.geometry_epoch);
         self.camera_generation += 1;
         true
     }
 
-    /// Centre the active camera on one rendered entity without changing zoom
-    /// distance, orientation, or viewport scale.
-    pub fn center_camera_on_entity(&mut self, handle: Handle) -> bool {
+    /// Bring one rendered entity into view: centre on it, keeping zoom
+    /// distance, orientation and viewport scale, or with `zoom` also fit the
+    /// view around it with room for its surroundings.
+    pub fn focus_camera_on_entity(&mut self, handle: Handle, zoom: bool) -> bool {
         let fallback_z = self.active_camera_target().z;
         let wires = self.wire_models_for(&[handle]);
-        let Some(center) = rendered_wire_center(&wires, fallback_z) else {
+        let Some(bounds) = rendered_wire_bounds(&wires, fallback_z) else {
             return false;
         };
-        self.center_active_camera_on(center)
+        self.focus_active_camera_on(bounds, zoom)
     }
 
-    /// Centre on one concrete attribute value attached to an INSERT rather
+    fn focus_active_camera_on(
+        &mut self,
+        (min, max): (glam::DVec3, glam::DVec3),
+        zoom: bool,
+    ) -> bool {
+        let center = (min + max) * 0.5;
+        if !zoom {
+            return self.center_active_camera_on(center);
+        }
+        // Three times the object's size keeps a short text readable while
+        // the drawing around it still shows where it is.
+        let half = ((max - min) * 1.5).max(glam::DVec3::splat(0.5));
+        self.fit_active_view(center - half, center + half)
+    }
+
+    /// Focus on one concrete attribute value attached to an INSERT rather
     /// than on the complete block extents.
-    pub fn center_camera_on_insert_attribute(&mut self, insert: Handle, index: usize) -> bool {
+    pub fn focus_camera_on_insert_attribute(
+        &mut self,
+        insert: Handle,
+        index: usize,
+        zoom: bool,
+    ) -> bool {
         let (attribute, fallback) = {
             let Some(EntityType::Insert(entity)) = self.document.get_entity(insert) else {
                 return false;
@@ -738,13 +788,18 @@ impl Scene {
             )
         };
         let wires = self.tessellate_one(&attribute);
-        let center = rendered_wire_center(&wires, fallback.z).unwrap_or(fallback);
-        self.center_active_camera_on(center)
+        let bounds = rendered_wire_bounds(&wires, fallback.z).unwrap_or((fallback, fallback));
+        self.focus_active_camera_on(bounds, zoom)
     }
 
-    /// Centre on a text entity stored in a block definition, transformed
+    /// Focus on a text entity stored in a block definition, transformed
     /// through the concrete visible INSERT occurrence that FIND is visiting.
-    pub fn center_camera_on_block_entity(&mut self, insert: Handle, entity: Handle) -> bool {
+    pub fn focus_camera_on_block_entity(
+        &mut self,
+        insert: Handle,
+        entity: Handle,
+        zoom: bool,
+    ) -> bool {
         let (source, transform) = {
             let Some(EntityType::Insert(insert_entity)) = self.document.get_entity(insert) else {
                 return false;
@@ -774,15 +829,23 @@ impl Scene {
 
         let fallback_z = self.active_camera_target().z;
         let wires = self.tessellate_one(&source);
-        let Some(local_center) = rendered_wire_center(&wires, fallback_z) else {
+        let Some((lo, hi)) = rendered_wire_bounds(&wires, fallback_z) else {
             return false;
         };
-        let world = transform.apply(codec::types::Vector3::new(
-            local_center.x,
-            local_center.y,
-            local_center.z,
-        ));
-        self.center_active_camera_on(glam::DVec3::new(world.x, world.y, world.z))
+        let mut min = glam::DVec3::splat(f64::INFINITY);
+        let mut max = glam::DVec3::splat(f64::NEG_INFINITY);
+        for corner in 0..8 {
+            let pick = |bit: usize, lo: f64, hi: f64| if corner & bit == 0 { lo } else { hi };
+            let world = transform.apply(codec::types::Vector3::new(
+                pick(1, lo.x, hi.x),
+                pick(2, lo.y, hi.y),
+                pick(4, lo.z, hi.z),
+            ));
+            let world = glam::DVec3::new(world.x, world.y, world.z);
+            min = min.min(world);
+            max = max.max(world);
+        }
+        self.focus_active_camera_on((min, max), zoom)
     }
 
     fn active_camera_target(&self) -> glam::DVec3 {
@@ -954,6 +1017,7 @@ impl Scene {
             rotation,
             distance,
             fov_y,
+            lens: lens_length,
             projection: if perspective {
                 view::camera::Projection::Perspective
             } else {
@@ -1020,7 +1084,7 @@ impl Scene {
             entry.aspect_ratio = viewport_width / viewport_height;
         }
         entry.perspective = cam.projection == view::camera::Projection::Perspective;
-        entry.lens_length = (12.0 / (cam.fov_y * 0.5).tan().max(1e-6)) as f64;
+        entry.lens_length = cam.lens as f64;
         entry.view_center = codec::types::Vector2::ZERO;
         // Stored twist = -roll, matching the decoder (roll = -twist).
         entry.view_twist = -cam.roll() as f64;
@@ -1469,7 +1533,7 @@ impl Scene {
                 vp.view_height = view_height as f64;
                 vp.twist_angle = twist;
                 vp.status.perspective = cam.projection == view::camera::Projection::Perspective;
-                vp.lens_length = (12.0 / (cam.fov_y * 0.5).tan().max(1e-6)) as f64;
+                vp.lens_length = cam.lens as f64;
             }
             true
         }
@@ -1643,7 +1707,12 @@ impl Scene {
         }
         self.camera
             .borrow_mut()
-            .fit_to_bounds(min, max, self.last_render_aspect.get().max(0.01));
+            .fit_to_bounds_bordered_f32(
+                min,
+                max,
+                self.last_render_aspect.get().max(0.01),
+                self.active_camera_pixels(),
+            );
         self.camera_generation += 1;
     }
 
@@ -1847,11 +1916,9 @@ impl Scene {
         // the one on screen (model space while a BEDIT is open) has to build
         // its own set.
         let hatches = if block == self.content_render_block_handle() {
-            // Tinted, matching the renderer's own call: the two then share one
-            // cache entry. Asking for an untinted set would key the same slot
-            // with a different selection signature and the two would evict
-            // each other on every frame. Tint is colour; it moves no vertex.
-            self.hatch_models_arc_for_view(true)
+            // Selection tint is a separate live overlay, and colour does not
+            // affect extents. Reuse the same stable resident cache as rendering.
+            self.hatch_models_arc_for_view(false)
         } else {
             std::sync::Arc::new(self.synced_hatch_models(
                 block,
@@ -1915,7 +1982,39 @@ impl Scene {
         // f64 all the way into the camera: a UTM-scale drawing loses whole
         // metres to an f32 round-trip, which shows up as a fit that sits
         // slightly off the geometry it was asked to frame.
-        self.camera.borrow_mut().fit_to_bounds_f64(min, max, aspect);
+        let pixels = self.active_camera_pixels();
+        self.camera
+            .borrow_mut()
+            .fit_to_bounds_bordered(min, max, aspect, pixels);
+        self.projection_bounds_epoch.set(self.geometry_epoch);
+        self.camera_generation += 1;
+    }
+
+    /// Fit model space while including transient locations that affect the
+    /// current interaction but are not part of rendered entity geometry.
+    pub(crate) fn fit_all_with_extra_points(&mut self, points: &[glam::DVec3]) {
+        if self.active_viewport.is_some() || self.current_layout != "Model" {
+            self.fit_all();
+            return;
+        }
+        let mut bounds = self.visible_block_bounds(self.current_layout_block_handle());
+        for point in points.iter().copied().filter(|point| point.is_finite()) {
+            bounds = Some(match bounds {
+                Some((min, max)) => (min.min(point), max.max(point)),
+                None => (point, point),
+            });
+        }
+        let Some((min, mut max)) = bounds else {
+            return;
+        };
+        if min == max {
+            max += glam::DVec3::splat(1.0);
+        }
+        let aspect = self.active_camera_aspect();
+        let pixels = self.active_camera_pixels();
+        self.camera
+            .borrow_mut()
+            .fit_to_bounds_bordered(min, max, aspect, pixels);
         self.projection_bounds_epoch.set(self.geometry_epoch);
         self.camera_generation += 1;
     }
@@ -1964,7 +2063,9 @@ impl Scene {
             if index == active {
                 tile.camera = live_camera.clone();
             } else {
-                tile.camera.fit_to_bounds_f64(min, max, aspect);
+                let pixels = (tile.rect.width * canvas_w, tile.rect.height * canvas_h);
+                let pixels = (pixels.0 > 0.0 && pixels.1 > 0.0).then_some(pixels);
+                tile.camera.fit_to_bounds_bordered(min, max, aspect, pixels);
             }
         }
         if let Some(aspect) = aspects.get(active) {

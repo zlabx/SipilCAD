@@ -52,7 +52,7 @@ pub(crate) struct Parameter<'a> {
 fn graph_handle(document: &CadDocument, definition: Handle) -> Option<Handle> {
     match document
         .objects
-        .get(&document.extension_dictionary_handle(definition)?)?
+        .get(&super::block_authoring::definition_dictionary(document, definition)?)?
     {
         ObjectType::Dictionary(dictionary) => dictionary.get("ACAD_ENHANCEDBLOCK"),
         _ => None,
@@ -435,6 +435,7 @@ pub(crate) fn reframe(
                 }
                 _ => continue,
             };
+            super::block_actions::reframe_value(&mut native.parameter.element.eval, native.definition_end_point.z, transform);
             native.definition_base_point = transform.apply(native.definition_base_point);
             native.definition_end_point = transform.apply(native.definition_end_point);
             for point in [

@@ -25,6 +25,9 @@ struct ExtractionRecord {
     color: String,
     linetype: String,
     details: String,
+    position: Option<codec::types::Vector3>,
+    /// Rotation in degrees, for the objects the Properties palette shows one for.
+    rotation: Option<f64>,
 }
 
 // ── In-session picked-file registries (web) ───────────────────────────────
@@ -165,6 +168,10 @@ impl ExtractionRecord {
             "color" => self.color.clone(),
             "linetype" => self.linetype.clone(),
             "details" => self.details.clone(),
+            "position_x" => self.position.map_or_else(String::new, |p| format!("{:.3}", p.x)),
+            "position_y" => self.position.map_or_else(String::new, |p| format!("{:.3}", p.y)),
+            "position_z" => self.position.map_or_else(String::new, |p| format!("{:.3}", p.z)),
+            "rotation" => self.rotation.map_or_else(String::new, |r| format!("{r:.3}")),
             _ => String::new(),
         }
     }
@@ -631,10 +638,31 @@ fn entity_details(entity: &EntityType) -> String {
         EntityType::Polyline2D(value) => format!("{} vertices", value.vertices.len()),
         EntityType::Polyline3D(value) => format!("{} vertices", value.vertices.len()),
         EntityType::Hatch(value) => value.pattern.name.clone(),
-        EntityType::Dimension(value) => format!("{:.3}", value.base().actual_measurement),
+        EntityType::Dimension(value) => format!("{:.3}", value.measurement()),
         EntityType::Spline(value) => format!("{} control points", value.control_points.len()),
         _ => String::new(),
     }
+}
+
+/// The placement point the Properties palette shows as Position.
+fn entity_position(entity: &EntityType) -> Option<codec::types::Vector3> {
+    match entity {
+        EntityType::Text(value) => Some(crate::entities::text::position(value)),
+        EntityType::MText(value) => Some(value.insertion_point),
+        EntityType::Insert(value) => Some(value.insert_point),
+        EntityType::Point(value) => Some(value.location),
+        _ => None,
+    }
+}
+
+fn entity_rotation(entity: &EntityType) -> Option<f64> {
+    let radians = match entity {
+        EntityType::Insert(value) => value.rotation,
+        EntityType::Text(value) => value.rotation,
+        EntityType::MText(value) => value.rotation,
+        _ => return None,
+    };
+    Some(radians.to_degrees())
 }
 
 fn collect_records(
@@ -661,6 +689,8 @@ fn collect_records(
             color: entity.common().color.to_string(),
             linetype: entity.common().linetype.clone(),
             details: entity_details(entity),
+            position: entity_position(entity),
+            rotation: entity_rotation(entity),
         });
     }
 }

@@ -27,7 +27,7 @@ GPL-3.0. Changes made by the rebrand overlay (GPL-3.0 section 5(a)):
   `BUILD.md` and a new `README.md`.
 - Upstream's CI and release workflows (`.github/`) are not carried in this repository; SipilCAD is built with its
   own pipeline (see `BUILD.md`).
-- Based on HakanSeven12/OpenCADStudio commit `b6fbac39ffc74398ba5d283ce2bc1dc07a8fd8f0`.
+- Based on HakanSeven12/OpenCADStudio commit `dbd50b20091cf6ce9cf61967ae0563df04014f5a`.
 
 Additional changes applied by the build after those substitutions:
 

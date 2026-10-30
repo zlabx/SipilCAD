@@ -79,6 +79,10 @@
     "title": "SipilCAD",
     "loading": "Yükleniyor…"
   },
+  "vi-VN": {
+    "title": "SipilCAD",
+    "loading": "Đang tải…"
+  },
   "zh-CN": {
     "title": "SipilCAD",
     "loading": "正在加载…"

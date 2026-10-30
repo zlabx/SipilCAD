@@ -7,6 +7,7 @@
 //! an override over the style default, so editing one of these rows writes here
 //! and the change round-trips to file.
 
+use codec::entities::EntityCommon;
 use codec::types::Color;
 use codec::xdata::{ExtendedData, XDataValue};
 use codec::{CadDocument, EntityType, Handle};
@@ -245,7 +246,12 @@ pub fn set(doc: &mut CadDocument, handle: Handle, code: i16, value: Option<XData
 /// document. Keeping the override on the entity means it is part of the single
 /// committed object and rides the ordinary undo/redo history.
 pub fn set_on_entity(entity: &mut EntityType, code: i16, value: Option<XDataValue>) {
-    let common = entity.common_mut();
+    set_on_common(entity.common_mut(), code, value);
+}
+
+/// [`set_on_entity`] for an entity reached through its own type, such as a
+/// `Dimension` rather than its `EntityType`.
+pub fn set_on_common(common: &mut EntityCommon, code: i16, value: Option<XDataValue>) {
     let mut kept: Vec<(i16, XDataValue)> = pairs(&common.extended_data)
         .into_iter()
         .filter(|(c, _)| *c != code)
@@ -383,6 +389,7 @@ fn inherited_int(doc: &CadDocument, handle: Handle, code: i16) -> i16 {
         return 0;
     };
     match code {
+        DIMSAH => style.dimsah as i16,
         DIMSD1 => style.dimsd1 as i16,
         DIMSD2 => style.dimsd2 as i16,
         DIMSE1 => style.dimse1 as i16,
@@ -401,6 +408,28 @@ fn inherited_int(doc: &CadDocument, handle: Handle, code: i16) -> i16 {
         DIMTALN => 0,
         DIMARCSYM => style.dimarcsym,
         _ => 0,
+    }
+}
+
+fn inherited_handle(doc: &CadDocument, handle: Handle, code: i16) -> Handle {
+    let Some(EntityType::Dimension(dimension)) = doc.get_entity(handle) else {
+        return Handle::NULL;
+    };
+    let Some(style) = doc.dim_styles.iter().find(|style| {
+        style
+            .name
+            .eq_ignore_ascii_case(&dimension.base().style_name)
+            || (dimension.base().style_name.trim().is_empty()
+                && style.name.eq_ignore_ascii_case("Standard"))
+    }) else {
+        return Handle::NULL;
+    };
+    let style = crate::entities::dimension::resolved_dimension_style(style, dimension, doc);
+    match code {
+        DIMBLK => style.dimblk,
+        DIMBLK1 => style.dimblk1,
+        DIMBLK2 => style.dimblk2,
+        _ => Handle::NULL,
     }
 }
 
@@ -523,6 +552,16 @@ fn apply_property(doc: &mut CadDocument, handle: Handle, field: &str, value: &st
         let Some(resolved) = resolved else {
             return false;
         };
+        // With separate arrows off both ends draw DIMBLK, so a one-end pick
+        // turns them on and keeps the other end's arrow. (#1916)
+        if matches!(field, "dim_arrowhead_1" | "dim_arrowhead_2")
+            && inherited_int(doc, handle, DIMSAH) == 0
+        {
+            let both = inherited_handle(doc, handle, DIMBLK);
+            let other = if code == DIMBLK1 { DIMBLK2 } else { DIMBLK1 };
+            set(doc, handle, other, Some(XDataValue::Handle(both)));
+            set(doc, handle, DIMSAH, Some(XDataValue::Integer16(1)));
+        }
         set(doc, handle, code, Some(XDataValue::Handle(resolved)));
         return true;
     }

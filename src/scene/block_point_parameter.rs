@@ -11,7 +11,7 @@ use codec::{CadDocument, Handle};
 fn graph_handle(document: &CadDocument, definition: Handle) -> Option<Handle> {
     match document
         .objects
-        .get(&document.extension_dictionary_handle(definition)?)?
+        .get(&super::block_authoring::definition_dictionary(document, definition)?)?
     {
         ObjectType::Dictionary(dictionary) => dictionary.get("ACAD_ENHANCEDBLOCK"),
         _ => None,
@@ -172,6 +172,7 @@ pub(crate) fn reframe(
     for (handle, grip_id) in owned {
         if let Some(ObjectType::DynamicBlock(object)) = document.objects.get_mut(&handle) {
             if let DynamicBlockData::PointParameter(parameter) = &mut object.data {
+                super::block_actions::reframe_value(&mut parameter.parameter.parameter.element.eval, parameter.parameter.definition_point.z, transform);
                 parameter.parameter.definition_point =
                     transform.apply(parameter.parameter.definition_point);
                 parameter.definition_label_point =

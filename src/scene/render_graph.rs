@@ -255,6 +255,9 @@ impl InstanceContext {
     }
 
     pub fn style_for(&self, document: &CadDocument, entity: &EntityType) -> ResolvedStyle {
+        if self.insert_path.iter().any(|insert| crate::scene::block_construction::is_construction(&insert.common)) {
+            return crate::scene::block_construction::display_style();
+        }
         self.block_style
             .map(|style| style.resolve(document, entity, self.viewport))
             .unwrap_or_else(|| render_style_for_viewport(document, entity, self.viewport))
@@ -281,6 +284,9 @@ pub struct RenderSceneGraph<'a> {
     depths: &'a FxHashMap<u64, [f32; 2]>,
     viewport: Option<Handle>,
     visibility_reveal: Option<&'a FxHashSet<Handle>>,
+    /// Published on the first INSERT: every placement asks for its block's
+    /// base point.
+    dictionary_owners: std::sync::OnceLock<super::block_authoring::DictionaryOwners<'a>>,
 }
 
 impl<'a> RenderSceneGraph<'a> {
@@ -300,6 +306,7 @@ impl<'a> RenderSceneGraph<'a> {
             depths,
             viewport: None,
             visibility_reveal: None,
+            dictionary_owners: std::sync::OnceLock::new(),
         }
     }
 
@@ -354,7 +361,7 @@ impl<'a> RenderSceneGraph<'a> {
                 .get(&handle.value())
                 .map_or(0.0, |depth| depth[0]);
             let context = InstanceContext::direct(direct_depth, viewport);
-            if !self.document_visible(entity) || !visible(entity, &context) {
+            if !self.document_visible(entity, false) || !visible(entity, &context) {
                 continue;
             }
             if let EntityType::Insert(insert) = entity {
@@ -412,7 +419,9 @@ impl<'a> RenderSceneGraph<'a> {
             .get(&root_handle.value())
             .map_or(0.0, |depth| depth[0]);
         let context = InstanceContext::direct(depth_base, self.viewport);
-        if self.document_visible(&entity) && visible(&entity, &context) {
+        // The caller has already shown the owning object; the placement itself
+        // is often synthetic (an arrowhead on layer 0), so layer 0 defers.
+        if self.document_visible(&entity, true) && visible(&entity, &context) {
             self.walk_insert_instances(&root_insert, scale_policy, &context, visible, leaf);
         }
     }
@@ -428,6 +437,8 @@ impl<'a> RenderSceneGraph<'a> {
         V: FnMut(&EntityType, &InstanceContext) -> bool,
         F: FnMut(&EntityType, &InstanceContext),
     {
+        self.dictionary_owners
+            .get_or_init(|| super::block_authoring::DictionaryOwners::publish(self.document));
         let insert_entity = EntityType::Insert(insert.clone());
         let block_style = parent
             .block_style
@@ -519,7 +530,7 @@ impl<'a> RenderSceneGraph<'a> {
                 self.annotation_scale_handle,
             );
             let entity = contextual.as_ref();
-            if !self.document_visible(entity) || !visible(entity, context) {
+            if !self.document_visible(entity, true) || !visible(entity, context) {
                 continue;
             }
             match entity {
@@ -584,8 +595,13 @@ impl<'a> RenderSceneGraph<'a> {
         }
     }
 
-    fn document_visible(&self, entity: &EntityType) -> bool {
+    /// `member`: the entity sits inside a block, where layer 0 defers to the
+    /// layer of the reference that places it.
+    fn document_visible(&self, entity: &EntityType, member: bool) -> bool {
         let common = entity.common();
+        if crate::scene::block_construction::is_construction(common) {
+            if member || !self.visibility_reveal.is_some_and(|handles| handles.contains(&common.handle)) { return false; }
+        }
         if common.invisible
             && !self
                 .visibility_reveal
@@ -594,9 +610,8 @@ impl<'a> RenderSceneGraph<'a> {
             return false;
         }
         let layer = self.document.layers.get(&common.layer);
-        if layer
-            .map(|layer| layer.flags.off || layer.flags.frozen)
-            .unwrap_or(false)
+        if (member && block_member_layer_hidden(self.document, &common.layer))
+            || (!member && layer.is_some_and(|layer| layer.flags.off || layer.flags.frozen))
         {
             return false;
         }
@@ -615,11 +630,19 @@ impl<'a> RenderSceneGraph<'a> {
     }
 }
 
+/// Whether a block member on `layer` is hidden by its layer. Frozen layers
+/// hide it; layer 0 being off does not, since a member on layer 0 shows on the
+/// layer of the reference that places it, which the caller has checked.
+/// (#1916)
+pub(crate) fn block_member_layer_hidden(document: &CadDocument, layer: &str) -> bool {
+    document.layers.get(layer).is_some_and(|record| {
+        record.flags.frozen
+            || (record.flags.off && !crate::scene::view::render::is_effective_layer_zero(layer))
+    })
+}
+
 pub fn block_base_point(document: &CadDocument, block_name: &str) -> Vector3 {
-    document
-        .block_records
-        .iter()
-        .find(|record| record.name.eq_ignore_ascii_case(block_name))
+    block_record_by_name(document, block_name)
         .map(|record| {
             if let Some((_, parameter)) = super::block_basepoint::parameter(document, record.handle)
             {
@@ -634,6 +657,19 @@ pub fn block_base_point(document: &CadDocument, block_name: &str) -> Vector3 {
                 .unwrap_or(record.base_point)
         })
         .unwrap_or(Vector3::ZERO)
+}
+
+/// An annotative dimension with a single scale representation has a single
+/// picture, its own block: edits drop it and moves carry it like any other
+/// dimension's. With several, each scale's block is a separate picture those
+/// edits leave behind, so it is drawn from its definition instead.
+fn single_scale_picture(document: &CadDocument, handle: Handle, block: &str) -> bool {
+    crate::scene::annotative::object_scale_memberships(document, handle).len() == 1
+        && matches!(
+            document.get_entity(handle),
+            Some(EntityType::Dimension(stored))
+                if stored.base().block_name.trim().eq_ignore_ascii_case(block)
+        )
 }
 
 /// The block reference that places a dimension's picture block: at the
@@ -882,7 +918,8 @@ fn entity_owned_block_uses(
                 let base = dimension.base();
                 let mut insert = dimension_picture_insert(base, record.name.clone());
                 insert.common = base.common.clone();
-                let picture = !crate::scene::annotative::is_annotative(document, entity);
+                let picture = !crate::scene::annotative::is_annotative(document, entity)
+                    || single_scale_picture(document, base.common.handle, &record.name);
                 vec![block_use(
                     document,
                     insert,
@@ -1166,6 +1203,35 @@ mod tests {
 
         assert!((from_insert.x - 12.0).abs() < 1.0e-9);
         assert!((applied.x - 11.0).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn layer_zero_block_members_follow_the_reference_until_frozen() {
+        use codec::entities::Line;
+        use codec::tables::BlockRecord;
+        let mut document = CadDocument::new();
+        let mut record = BlockRecord::new("ARROW");
+        record.handle = document.allocate_handle();
+        let block = record.handle;
+        document.block_records.add(record).unwrap();
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.owner_handle = block;
+        document.add_entity(EntityType::Line(line)).unwrap();
+        let leaves = |document: &CadDocument| {
+            let depths = rustc_hash::FxHashMap::default();
+            let graph = RenderSceneGraph::new(document, None, None, true, &depths);
+            let arrow =
+                block_use_from_handle(document, block, BlockRole::ArrowHead, Vector3::ZERO)
+                    .unwrap();
+            let mut count = 0;
+            graph.walk_block_use(&arrow, block, |_, _| true, |_, _| count += 1);
+            count
+        };
+
+        document.layers.get_mut("0").unwrap().flags.off = true;
+        assert_eq!(leaves(&document), 1);
+        document.layers.get_mut("0").unwrap().flags.frozen = true;
+        assert_eq!(leaves(&document), 0);
     }
 
     #[test]

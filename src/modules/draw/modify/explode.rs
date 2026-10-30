@@ -13,6 +13,7 @@
 //     Dimension   → Lines (extension + dimension + arrows) + Text
 //     MText       → Text lines
 //     Region      → Lines, Arcs, Circles, Ellipses, Splines (from ACIS B-Rep loops or wires)
+//     Hatch       → Lines of its pattern, clipped to the boundary (not solid/gradient)
 //
 //   Unsupported entity types are skipped silently.
 
@@ -100,15 +101,21 @@ pub fn explode_entity(entity: &EntityType, document: &CadDocument) -> Vec<Entity
         {
             vec![]
         }
+        // The codec's explode_from_document refuses a MINSERT; expand it cell
+        // by cell from the block's entities instead.
         EntityType::Insert(ins) => ins
-            .explode_from_document(document)
+            .block_entities_from_document(document)
+            .map(|entities| ins.explode(&entities))
+            .unwrap_or_default()
             .into_iter()
+            .filter(|entity| !crate::scene::block_construction::is_construction(entity.common()))
             .map(normalize_insert_entity)
             .collect(),
         EntityType::MLine(ml) => explode_mline(ml),
         EntityType::Dimension(dim) => explode_dimension(dim, document),
         EntityType::MText(t) => crate::entities::mtext::explode_mtext(t, document),
         EntityType::Region(region) => explode_region(region),
+        EntityType::Hatch(hatch) => explode_hatch(hatch),
         _ => vec![],
     }
 }
@@ -428,6 +435,37 @@ fn explode_mline(ml: &MLine) -> Vec<EntityType> {
     }
 
     result
+}
+
+// ── Hatch explode ──────────────────────────────────────────────────────────
+
+/// The pattern lines exactly as the renderer draws them, lifted from world XY
+/// back onto the hatch plane. Solid and gradient fills yield nothing, so they
+/// stay intact and are reported as not explodable.
+fn explode_hatch(hatch: &codec::entities::Hatch) -> Vec<EntityType> {
+    let Some(model) = crate::scene::Scene::hatch_model_from_dxf(hatch, [1.0; 4]) else {
+        return vec![];
+    };
+    let plane = crate::entities::curve::ocs_plane(hatch.normal, hatch.elevation);
+    let lift = |xy: [f64; 2]| plane.coordinates_at_xy(xy).map(|uv| plane.point_at(uv));
+    let mut common = hatch.common.clone();
+    common.handle = Handle::NULL;
+    common.owner_handle = Handle::NULL;
+    common.xdictionary_handle = None;
+    common.reactors.clear();
+    model
+        .pattern_segments()
+        .into_iter()
+        .filter_map(|[a, b]| {
+            let (a, b) = (lift(a)?, lift(b)?);
+            Some(EntityType::Line(LineEnt {
+                common: common.clone(),
+                start: Vector3::new(a[0], a[1], a[2]),
+                end: Vector3::new(b[0], b[1], b[2]),
+                ..LineEnt::new()
+            }))
+        })
+        .collect()
 }
 
 // ── Region explode ─────────────────────────────────────────────────────────
@@ -964,16 +1002,25 @@ fn dim_terminator(
                 out.push(dim_seg(r, tip, common));
             }
         }
-        A::Tick { size } => {
+        A::Tick { size, width } => {
             let s = *size as f64;
             let (ox, oy) = (dx + px, dy + py);
             let m = (ox * ox + oy * oy).sqrt().max(1e-9);
-            let (ox, oy) = (ox / m * s, oy / m * s);
-            out.push(dim_seg(
+            let (ux, uy) = (ox / m, oy / m);
+            let (ox, oy) = (ux * s, uy * s);
+            let (a, b) = (
                 Vector3::new(tip.x - ox, tip.y - oy, tip.z),
                 Vector3::new(tip.x + ox, tip.y + oy, tip.z),
-                common,
-            ));
+            );
+            out.push(dim_seg(a, b, common));
+            if *width > 0.0 {
+                // The architectural tick's band, as filled triangles.
+                let h = *width as f64 * 0.5;
+                let side =
+                    |p: Vector3, k: f64| Vector3::new(p.x - uy * h * k, p.y + ux * h * k, p.z);
+                tri(side(a, -1.0), side(a, 1.0), side(b, 1.0), &mut out);
+                tri(side(a, -1.0), side(b, 1.0), side(b, -1.0), &mut out);
+            }
         }
         A::Open { size, half_angle } => {
             let size = *size as f64;
@@ -985,10 +1032,16 @@ fn dim_terminator(
             let r = *size as f64 * 0.5;
             terminator_circle(tip, r, *filled, common, &mut out);
         }
-        A::Origin { size } => {
-            terminator_circle(tip, *size as f64 * 0.25, true, common, &mut out);
-            let half = *size as f64 * 0.5;
-            out.push(dim_seg(pt(0.0, -half), pt(0.0, half), common));
+        A::Origin { size, inner } => {
+            // Same geometry as the "_Origin" / "_Origin2" blocks; see
+            // `ArrowKind::Origin`.
+            let size = *size as f64;
+            terminator_circle(tip, size * 0.5, false, common, &mut out);
+            if *inner {
+                terminator_circle(tip, size * 0.25, false, common, &mut out);
+            }
+            let start = if *inner { size * 0.5 } else { 0.0 };
+            out.push(dim_seg(pt(start, 0.0), pt(size, 0.0), common));
         }
         A::Box_ { size, filled } => {
             let h = *size as f64 * 0.5;
@@ -1226,6 +1279,7 @@ fn dim_metrics(dim: &Dimension, doc: &CadDocument) -> DimMetrics {
     let (arrow1, arrow2) = if dimtsz > 1e-9 {
         let t = ArrowKind::Tick {
             size: dimtsz as f32,
+            width: 0.0,
         };
         (t.clone(), t)
     } else if let Some(s) = style {
@@ -1915,6 +1969,47 @@ fn sync_dimension_base_points_and_collect_pending(doc: &mut CadDocument) -> Vec<
     pending
 }
 
+/// Remove `*D` pictures no dimension or insert names any more: a rotated
+/// or mirrored dimension detaches its old one (kept in the open drawing so an
+/// undo can point back to it), which a saved file should not carry.
+fn drop_detached_dimension_blocks(doc: &mut CadDocument) {
+    let named: std::collections::HashSet<String> = doc
+        .entities()
+        .chain(
+            doc.block_records
+                .iter()
+                .flat_map(|record| record.entity_handles.iter())
+                .filter_map(|handle| doc.get_entity(*handle)),
+        )
+        .filter_map(|entity| match entity {
+            EntityType::Dimension(d) => Some(d.base().block_name.to_ascii_uppercase()),
+            EntityType::Insert(insert) => Some(insert.block_name.to_ascii_uppercase()),
+            _ => None,
+        })
+        .collect();
+    let detached: Vec<String> = doc
+        .block_records
+        .iter()
+        .map(|record| record.name.clone())
+        .filter(|name| {
+            let upper = name.to_ascii_uppercase();
+            upper.starts_with("*D") && !named.contains(&upper)
+        })
+        .collect();
+    for name in detached {
+        if let Some(record) = doc.block_records.remove(&name) {
+            let mut owned = record.entity_handles.clone();
+            owned.push(record.block_entity_handle);
+            owned.push(record.block_end_handle);
+            for handle in owned {
+                if !handle.is_null() {
+                    doc.remove_entity(handle);
+                }
+            }
+        }
+    }
+}
+
 /// Smallest free `*D<n>` anonymous block name in `doc`.
 fn next_dimension_block_name(doc: &CadDocument, next: &mut u64) -> String {
     loop {
@@ -1929,6 +2024,7 @@ fn next_dimension_block_name(doc: &CadDocument, next: &mut u64) -> String {
 
 /// Build missing anonymous dimension geometry blocks before writing.
 pub fn bake_dimension_blocks(doc: &mut CadDocument) {
+    drop_detached_dimension_blocks(doc);
     // Keep group-10 in step and find missing blocks in one entity pass. Existing
     // `*D` blocks are the save cache: only invalidated/new dimensions enter the
     // relatively expensive geometry generation below.
@@ -2071,6 +2167,52 @@ mod tests {
         insert.row_count = u16::MAX;
         insert.column_count = u16::MAX;
         assert!(explode_entity(&EntityType::Insert(insert), &doc).is_empty());
+    }
+
+    /// A pattern hatch explodes into its pattern lines on the hatch plane,
+    /// inside the boundary; a solid fill does not explode.
+    #[test]
+    fn pattern_hatch_explodes_to_clipped_lines() {
+        use codec::entities::hatch::{BoundaryEdge, BoundaryPath, HatchPatternLine, LineEdge};
+        use codec::types::Vector2;
+        let mut path = BoundaryPath::new();
+        for (s, e) in [((0.0, 0.0), (10.0, 0.0)), ((10.0, 0.0), (10.0, 10.0))]
+            .into_iter()
+            .chain([((10.0, 10.0), (0.0, 10.0)), ((0.0, 10.0), (0.0, 0.0))])
+        {
+            path.edges.push(BoundaryEdge::Line(LineEdge {
+                start: Vector2::new(s.0, s.1),
+                end: Vector2::new(e.0, e.1),
+            }));
+        }
+        let mut hatch = codec::entities::Hatch::new();
+        hatch.paths.push(path);
+        hatch.elevation = 3.0;
+        hatch.common.layer = "HATCH".into();
+        let doc = CadDocument::new();
+        assert!(explode_entity(&EntityType::Hatch(Box::new(hatch.clone())), &doc).is_empty());
+
+        hatch.is_solid = false;
+        hatch.pattern.name = "ANSI31".into();
+        hatch.pattern.lines = vec![HatchPatternLine {
+            angle: std::f64::consts::FRAC_PI_4,
+            base_point: Vector2::new(0.0, 0.0),
+            offset: Vector2::new(-1.0, 1.0),
+            dash_lengths: vec![],
+        }];
+        let pieces = explode_entity(&EntityType::Hatch(Box::new(hatch)), &doc);
+        assert!(pieces.len() > 5);
+        for piece in &pieces {
+            let EntityType::Line(line) = piece else {
+                panic!("hatch exploded into a non-line");
+            };
+            assert_eq!(line.common.layer, "HATCH");
+            for p in [line.start, line.end] {
+                assert!((p.z - 3.0).abs() < 1e-9);
+                assert!((-1e-6..=10.0 + 1e-6).contains(&p.x));
+                assert!((-1e-6..=10.0 + 1e-6).contains(&p.y));
+            }
+        }
     }
 
     /// EXPLODE resolves ByBlock transparency and linetype on the children it

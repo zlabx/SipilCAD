@@ -73,8 +73,6 @@ pub static COPY: &[u8] = include_bytes!("../../assets/icons/ui/copy.svg");
 pub static MENU: &[u8] = include_bytes!("../../assets/icons/ui/menu.svg");
 pub static MOVE: &[u8] = include_bytes!("../../assets/icons/ui/move.svg");
 pub static RESIZE: &[u8] = include_bytes!("../../assets/icons/ui/resize.svg");
-/// `RESIZE` mirrored for a bottom-left corner grip.
-pub static RESIZE_LEFT: &[u8] = include_bytes!("../../assets/icons/ui/resize_left.svg");
 pub static PIN: &[u8] = include_bytes!("../../assets/icons/ui/pin.svg");
 /// `PIN` tilted 30°: the pin while auto-hide is on.
 pub static PIN_ACTIVE: &[u8] = include_bytes!("../../assets/icons/ui/pin_active.svg");
@@ -99,6 +97,13 @@ pub static DIRTY_DOT: &[u8] = include_bytes!("../../assets/icons/ui/dirty_dot.sv
 pub static ARROW_LONG_RIGHT: &[u8] = include_bytes!("../../assets/icons/ui/arrow_long_right.svg");
 pub static MORE: &[u8] = include_bytes!("../../assets/icons/ui/more.svg");
 pub static INFO: &[u8] = include_bytes!("../../assets/icons/ui/info.svg");
+pub static MESH: &[u8] = include_bytes!("../../assets/icons/ui/mesh.svg");
+pub static ALERT: &[u8] = include_bytes!("../../assets/icons/ui/alert.svg");
+pub static WARNING: &[u8] = include_bytes!("../../assets/icons/ui/warning.svg");
+pub static IMAGE: &[u8] = include_bytes!("../../assets/icons/ui/image.svg");
+pub static LOCK: &[u8] = include_bytes!("../../assets/icons/ui/lock.svg");
+pub static EYE: &[u8] = include_bytes!("../../assets/icons/ui/eye.svg");
+pub static EYE_OFF: &[u8] = include_bytes!("../../assets/icons/ui/eye_off.svg");
 
 // ── Status-bar toggle icons (issue #216) ──────────────────────────────────
 pub static ST_ORTHO: &[u8] = include_bytes!("../../assets/icons/status/ortho.svg");
@@ -106,6 +111,7 @@ pub static ST_POLAR: &[u8] = include_bytes!("../../assets/icons/status/polar.svg
 pub static ST_OSNAP: &[u8] = include_bytes!("../../assets/icons/status/osnap.svg");
 pub static ST_OTRACK: &[u8] = include_bytes!("../../assets/icons/status/otrack.svg");
 pub static ST_DYN: &[u8] = include_bytes!("../../assets/icons/status/dyn.svg");
+pub static ST_DUCS: &[u8] = include_bytes!("../../assets/icons/status/ducs.svg");
 pub static ST_LWT: &[u8] = include_bytes!("../../assets/icons/status/lwt.svg");
 pub static ST_TRANSPARENCY: &[u8] = include_bytes!("../../assets/icons/status/transparency.svg");
 pub static ST_ISOLATE: &[u8] = include_bytes!("../../assets/icons/status/isolate.svg");

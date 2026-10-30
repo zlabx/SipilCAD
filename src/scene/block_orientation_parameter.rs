@@ -69,7 +69,7 @@ pub(crate) struct Parameter<'a> {
 fn graph_handle(document: &CadDocument, definition: Handle) -> Option<Handle> {
     match document
         .objects
-        .get(&document.extension_dictionary_handle(definition)?)?
+        .get(&super::block_authoring::definition_dictionary(document, definition)?)?
     {
         ObjectType::Dictionary(dictionary) => dictionary.get("ACAD_ENHANCEDBLOCK"),
         _ => None,
@@ -129,6 +129,19 @@ pub(crate) fn parameters(document: &CadDocument, definition: Handle) -> Vec<Para
             })
         })
         .collect()
+}
+
+pub(crate) fn set_alignment_type(
+    document: &mut CadDocument, definition: Handle, handle: Handle, perpendicular: bool,
+) -> Result<bool, &'static str> {
+    if !parameters(document, definition).iter().any(|p| p.handle == handle && p.kind == Kind::Alignment) {
+        return Err("Select an Alignment parameter in the active block definition.");
+    }
+    let Some(ObjectType::DynamicBlock(object)) = document.objects.get_mut(&handle) else { unreachable!() };
+    let DynamicBlockData::AlignmentParameter(parameter) = &mut object.data else { unreachable!() };
+    if parameter.align_perpendicular == perpendicular { return Ok(false); }
+    parameter.align_perpendicular = perpendicular;
+    Ok(true)
 }
 
 pub(crate) fn placement_error(
@@ -281,8 +294,9 @@ pub(crate) fn create(
         Kind::Flip => DynamicBlockData::FlipParameter(BlockFlipParameter {
             parameter: native,
             flip_label: label,
-            base_state_label: "Not flipped".into(),
-            flipped_state_label: "Flipped".into(),
+            // Unset labels use UI defaults without persisting a UI language.
+            base_state_label: String::new(),
+            flipped_state_label: String::new(),
             definition_label_point: reference,
             flags_96: slots.eval + 1,
             tooltip: "UpdatedFlip".into(),
@@ -473,6 +487,7 @@ pub(crate) fn reframe(
                 }
                 _ => continue,
             };
+            super::block_actions::reframe_value(&mut native.parameter.element.eval, native.definition_end_point.z, transform);
             native.definition_base_point = transform.apply(native.definition_base_point);
             native.definition_end_point = transform.apply(native.definition_end_point);
             for point in [

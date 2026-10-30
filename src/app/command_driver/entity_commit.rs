@@ -336,7 +336,14 @@ impl OpenCADStudio {
             return Some(Task::none());
         }
         // Projected points cannot use direct paper-space source inference.
-        let association_allowed = self.dimension_association_allowed(i);
+        // A source picked inside a block reference needs its INSERT path,
+        // which only the acquired snaps carry.
+        let association_allowed = self.dimension_association_allowed(i)
+            && !self.accepted_snaps().iter().any(|snap| {
+                snap.source
+                    .as_ref()
+                    .is_some_and(|source| !source.block_path.is_empty())
+            });
         let inherited_dimension = if preserve_base_style {
             match &entity {
                 codec::EntityType::Dimension(dimension) => Some((
@@ -788,8 +795,11 @@ impl OpenCADStudio {
                 .block_records
                 .get(&name)
                 .is_some();
+        let fresh = !self.block_palette_stale();
         match self.tabs[i].scene.create_block_with_options(*options) {
             Ok(insert_handle) => {
+                // Only this block's definition changed.
+                self.note_block_changes(fresh, [&name]);
                 self.tabs[i].dirty = true;
                 self.tabs[i].scene.deselect_all();
                 if !insert_handle.is_null() {
@@ -824,6 +834,8 @@ impl OpenCADStudio {
     }
 
     pub(super) fn handle_commit_hatch(&mut self, hatch: crate::scene::HatchModel) {
+        let perf_started = crate::perf::enabled().then(iced::time::Instant::now);
+        let boundary_vertices = hatch.boundary.len();
         let i = self.active_tab;
         let label = self.history_label_from_active_cmd(i, "HATCH");
         let pending = self.begin_undo(i, label, 1, true);
@@ -841,6 +853,12 @@ impl OpenCADStudio {
         if let Some(pd) = pending {
             self.commit_undo_delta(i, pd);
         }
+        let commit_ms = crate::perf::elapsed_ms(perf_started);
+        if commit_ms >= 1.0 {
+            crate::perf_record!(
+                "[perf] hatch-commit total={commit_ms:.1}ms boundary_vertices={boundary_vertices} source=direct",
+            );
+        }
     }
 
     pub(super) fn handle_commit_styled_hatch(
@@ -849,6 +867,8 @@ impl OpenCADStudio {
         color: codec::types::Color,
         transparency: codec::types::Transparency,
     ) {
+        let perf_started = crate::perf::enabled().then(iced::time::Instant::now);
+        let boundary_vertices = hatch.boundary.len();
         let i = self.active_tab;
         let label = self.history_label_from_active_cmd(i, "HATCH");
         let pending = self.begin_undo(i, label, 1, true);
@@ -869,6 +889,12 @@ impl OpenCADStudio {
         if let Some(pd) = pending {
             self.commit_undo_delta(i, pd);
         }
+        let commit_ms = crate::perf::elapsed_ms(perf_started);
+        if commit_ms >= 1.0 {
+            crate::perf_record!(
+                "[perf] hatch-commit total={commit_ms:.1}ms boundary_vertices={boundary_vertices} source=styled",
+            );
+        }
     }
 
     pub(super) fn handle_commit_hatch_with_boundaries(
@@ -877,6 +903,9 @@ impl OpenCADStudio {
         boundaries: Vec<codec::EntityType>,
         entity_style: Option<(codec::types::Color, codec::types::Transparency)>,
     ) {
+        let perf_started = crate::perf::enabled().then(iced::time::Instant::now);
+        let boundary_vertices = hatch.boundary.len();
+        let boundary_count = boundaries.len();
         let i = self.active_tab;
         let label = self.history_label_from_active_cmd(i, "HATCH");
         let pending = self.begin_undo(i, label, boundaries.len() + 1, true);
@@ -911,6 +940,12 @@ impl OpenCADStudio {
         if let Some(pd) = pending {
             self.commit_undo_delta(i, pd);
         }
+        let commit_ms = crate::perf::elapsed_ms(perf_started);
+        if commit_ms >= 1.0 {
+            crate::perf_record!(
+                "[perf] hatch-commit total={commit_ms:.1}ms boundary_vertices={boundary_vertices} source_boundaries={boundary_count} linked=true",
+            );
+        }
     }
 
     pub(super) fn handle_commit_hatches(
@@ -918,6 +953,16 @@ impl OpenCADStudio {
         hatches: Vec<crate::scene::HatchModel>,
         entity_style: Option<(codec::types::Color, codec::types::Transparency)>,
     ) {
+        let perf_started = crate::perf::enabled().then(iced::time::Instant::now);
+        let hatch_count = hatches.len();
+        let boundary_vertices = if crate::perf::enabled() {
+            hatches
+                .iter()
+                .map(|hatch| hatch.boundary.len())
+                .sum::<usize>()
+        } else {
+            0
+        };
         let i = self.active_tab;
         let label = self.history_label_from_active_cmd(i, "HATCH");
         let pending = self.begin_undo(i, label, hatches.len(), true);
@@ -939,6 +984,12 @@ impl OpenCADStudio {
         self.refresh_properties();
         if let Some(pd) = pending {
             self.commit_undo_delta(i, pd);
+        }
+        let commit_ms = crate::perf::elapsed_ms(perf_started);
+        if commit_ms >= 1.0 {
+            crate::perf_record!(
+                "[perf] hatch-commit total={commit_ms:.1}ms hatches={hatch_count} boundary_vertices={boundary_vertices} source=batch",
+            );
         }
     }
 

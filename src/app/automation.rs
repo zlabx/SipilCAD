@@ -32,8 +32,8 @@ use super::OpenCADStudio;
 /// a time (the document session persists across reconnects); every socket
 /// request carries `"token"` (see `rest::api_token`).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn serve() {
-    let mut app = OpenCADStudio::new();
+pub fn serve(read_only: bool) {
+    let mut app = OpenCADStudio::new_headless(read_only);
     match port_arg() {
         Some(port) => serve_socket(
             &mut app,
@@ -78,6 +78,19 @@ pub fn export_headless(
         Err(e) => {
             eprintln!("export: cannot write {}: {e}", output.display());
             1
+        }
+    }
+}
+
+/// Unattended script run (`--batch SCRIPT`, or `--each SCRIPT FILES...`)
+/// with no window; returns the process exit code (2: unreadable script).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_batch(script: &std::path::Path, files: &[PathBuf], read_only: bool) -> i32 {
+    match std::fs::read_to_string(script) {
+        Ok(text) => OpenCADStudio::new_headless(read_only).run_batch(&text, files),
+        Err(e) => {
+            eprintln!("batch: cannot read {}: {e}", script.display());
+            2
         }
     }
 }
@@ -674,6 +687,28 @@ fn audit_ascii_dxf_references(path: &std::path::Path) -> Result<Value, String> {
 }
 
 impl OpenCADStudio {
+    /// A headless session. `read_only` is the `--read-only` launch flag,
+    /// which the GUI takes from its startup config instead. (#1928)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn new_headless(read_only: bool) -> Self {
+        let mut app = Self::new();
+        app.read_only = read_only;
+        app
+    }
+
+    /// The refusal every automation write of the drawing gives in a
+    /// `--read-only` session, matching the GUI's SAVE / SAVEAS / SAVEALL.
+    pub(super) fn read_only_save_refusal(&self) -> Option<Value> {
+        self.read_only.then(|| {
+            json!({
+                "ok": false,
+                "status": "failed",
+                "code": "read_only",
+                "error": "Read-only session (--read-only): saving is disabled.",
+            })
+        })
+    }
+
     /// Handle one JSON request line and return the JSON response.
     #[cfg(any(test, not(target_arch = "wasm32")))]
     pub(crate) fn automation_op(&mut self, line: &str) -> Value {
@@ -780,6 +815,9 @@ impl OpenCADStudio {
                         self.tabs[i].adopt_active_ucs_from_header();
                         self.tabs[i].current_path = Some(path_buf);
                         self.tabs[i].is_start = false;
+                        // As the GUI open does: save stamps ORTHOMODE / OSMODE
+                        // back from the app state.
+                        self.adopt_header_sysvars(i);
                         self.tabs[i].scene.rebuild_derived_caches();
                         // The opened document settled (API v9): the post-op
                         // boundary announces `DocumentOpened` once for this load.
@@ -849,6 +887,10 @@ impl OpenCADStudio {
             "text_search" => self.automation_text_search(&req),
             "text_audit" => self.automation_text_audit(&req),
             "text_replace" => self.automation_text_replace(&req),
+            "blocks"
+            | "block_instances"
+            | "cad_get_blocks"
+            | "cad_extract_block_instances" => self.automation_blocks(&req),
             "records" => self.record_query(&req),
             "record_schema" => self.record_schema(&req),
             "capabilities" => self.record_capabilities(),
@@ -1018,6 +1060,9 @@ impl OpenCADStudio {
                 json!({ "ok": true, "selected": self.tabs[i].scene.selected_entities().len() })
             }
             "save" => {
+                if let Some(refusal) = self.read_only_save_refusal() {
+                    return refusal;
+                }
                 if self.tabs[self.active_tab].block_test.is_some() {
                     return err("Test Block is temporary and cannot be saved.");
                 }
@@ -2657,6 +2702,36 @@ mod tests {
     }
 
     #[test]
+    fn open_op_keeps_orthomode_through_save() {
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        app.tabs[i].scene.document.header.ortho_mode = true;
+        let path = std::env::temp_dir().join(format!("ocs_ortho_{}.dxf", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_string_lossy().replace('\\', "\\\\");
+        // Written straight from the document, not through save's stamping.
+        crate::io::save(&app.tabs[i].scene.document, &path).unwrap();
+
+        let mut app = OpenCADStudio::new_for_test();
+        let opened = app.automation_op(&format!(r#"{{"op":"open","path":"{p}"}}"#));
+        assert_eq!(opened["ok"], true, "{}", opened["error"]);
+        let saved = app.automation_op(&format!(r#"{{"op":"save","path":"{p}"}}"#));
+        assert_eq!(saved["ok"], true, "{}", saved["error"]);
+        let reopened = app.automation_op(&format!(r#"{{"op":"open","path":"{p}"}}"#));
+        assert_eq!(reopened["ok"], true, "{}", reopened["error"]);
+        let i = app.active_tab;
+        assert!(app.tabs[i].scene.document.header.ortho_mode);
+        drop(app);
+        let sidecar = path.with_file_name(format!(
+            ".{}.ocs.lock",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = std::fs::remove_file(sidecar);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn wblock_op_exports_a_block_definition() {
         let mut app = OpenCADStudio::new_for_test();
         app.automation_op(r#"{"op":"new"}"#);
@@ -3516,6 +3591,8 @@ mod tests {
             let _ = app.run_command_line("LINE 0,0 10,10");
             app.tabs[i].scene.selection.borrow_mut().view.vp_size = (800.0, 600.0);
             let _ = app.run_command_line("ZOOM EXTENTS");
+            // Extents leave a 3-pixel border, so the window paths run 1 px
+            // inside the view edge to enclose the line.
             // Both directions. Crossing = a right → left diagonal sweep (the
             // freeform path may be degenerate — crossing counts hits).
             // Window = a left → right perimeter walk so the freeform ring
@@ -3525,11 +3602,11 @@ mod tests {
                 (0..=10)
                     .map(|k| {
                         let t = k as f32 / 10.0;
-                        (20.0 + t * 760.0, 20.0 + t * 560.0)
+                        (1.0 + t * 798.0, 1.0 + t * 598.0)
                     })
                     .collect()
             } else if add {
-                let (sx, sy, ex, ey) = (780.0f32, 580.0f32, 20.0f32, 20.0f32);
+                let (sx, sy, ex, ey) = (799.0f32, 599.0f32, 1.0f32, 1.0f32);
                 (0..=10)
                     .map(|k| {
                         let t = k as f32 / 10.0;
@@ -3538,14 +3615,14 @@ mod tests {
                     .collect()
             } else {
                 vec![
-                    (20.0, 20.0),
-                    (400.0, 20.0),
-                    (780.0, 20.0),
-                    (780.0, 300.0),
-                    (780.0, 580.0),
-                    (400.0, 580.0),
-                    (20.0, 580.0),
-                    (20.0, 300.0),
+                    (1.0, 1.0),
+                    (400.0, 1.0),
+                    (799.0, 1.0),
+                    (799.0, 300.0),
+                    (799.0, 599.0),
+                    (400.0, 599.0),
+                    (1.0, 599.0),
+                    (1.0, 300.0),
                 ]
             };
             let _ = app.update(Message::ViewportMove(iced::Point::new(
@@ -3703,6 +3780,54 @@ mod tests {
             }
             other => panic!("dest MTEXT missing: {other:?}"),
         }
+    }
+
+    #[test]
+    fn matchprop_source_glow_survives_preview_refresh_and_destination_apply() {
+        use crate::command::StepInput;
+        use codec::{entities::Line, types::Vector3, EntityType};
+
+        let mut app = OpenCADStudio::new_for_test();
+        app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+
+        let mut source = Line::new();
+        source.start = Vector3::new(0.0, 0.0, 0.0);
+        source.end = Vector3::new(20.0, 10.0, 0.0);
+        let source_h = app.tabs[i].scene.add_entity(EntityType::Line(source));
+
+        let mut destination = Line::new();
+        destination.start = Vector3::new(30.0, 0.0, 0.0);
+        destination.end = Vector3::new(40.0, 10.0, 0.0);
+        let destination_h = app
+            .tabs[i]
+            .scene
+            .add_entity(EntityType::Line(destination));
+
+        let _ = app.run_command_line("MATCHPROP");
+        let _ = app.feed_command(StepInput::EntityPick(source_h, glam::DVec3::ZERO));
+
+        app.refresh_active_cmd_preview(i);
+        assert!(
+            !app.tabs[i].scene.preview_wires.is_empty(),
+            "a generic preview refresh must seed the selected source glow"
+        );
+
+        let _ = app.feed_command(StepInput::SelectionComplete(vec![destination_h]));
+        assert!(
+            app.tabs[i].active_cmd.is_some(),
+            "MATCHPROP should remain active for additional destinations"
+        );
+        assert!(
+            !app.tabs[i].scene.preview_wires.is_empty(),
+            "applying one destination must immediately restore the source glow"
+        );
+
+        app.refresh_active_cmd_preview(i);
+        assert!(
+            !app.tabs[i].scene.preview_wires.is_empty(),
+            "later generic refreshes must not erase the source glow"
+        );
     }
 
     #[test]

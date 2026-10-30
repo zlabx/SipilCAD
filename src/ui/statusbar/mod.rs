@@ -69,7 +69,10 @@ pub struct StatusBarLayoutState<'a> {
     pub annotation_all_visible: bool,
     pub annotation_auto_add: bool,
     pub viewport_scale_synced: Option<bool>,
+    /// Display lock of the entered or selected viewports, `None` without one.
+    pub viewport_locked: Option<bool>,
     pub lineweight_display: bool,
+    pub constraint_status: Option<bool>,
 }
 
 /// Drafting modes and document settings represented by status bar controls.
@@ -79,6 +82,7 @@ pub struct StatusBarModes {
     pub polar_increment_deg: f32,
     pub dyn_input: bool,
     pub otrack: bool,
+    pub dynamic_ucs: bool,
     pub isometric_drafting: bool,
     pub iso_plane: crate::app::settings::IsoPlane,
     pub clean_screen: bool,
@@ -150,7 +154,9 @@ impl StatusBar {
             annotation_all_visible,
             annotation_auto_add,
             viewport_scale_synced,
+            viewport_locked,
             lineweight_display,
+            constraint_status,
         } = layout;
         let StatusBarModes {
             ortho_mode,
@@ -158,6 +164,7 @@ impl StatusBar {
             polar_increment_deg,
             dyn_input,
             otrack,
+            dynamic_ucs,
             isometric_drafting,
             iso_plane,
             clean_screen,
@@ -329,6 +336,10 @@ impl StatusBar {
                 .into(),
             );
         }
+        if let Some(enabled) = constraint_status {
+            pills.push(tip(toggle_pill(include_bytes!("../../../assets/icons/constrain/fixed.svg"), enabled,
+                Message::ToggleBlockConstraintStatus), t!("Constraint status display (BCONSTATUSMODE)")).into());
+        }
         // Each click removes one flagged constraint.
         if parametric_conflicts > 0 {
             pills.push(
@@ -396,6 +407,19 @@ impl StatusBar {
                 .into(),
             );
         }
+        if vis(StatusPill::Ducs) {
+            pills.push(
+                tip(
+                    toggle_pill(
+                        crate::ui::icons::ST_DUCS,
+                        dynamic_ucs,
+                        Message::ToggleDynamicUcs,
+                    ),
+                    t!("Dynamic UCS\nF6"),
+                )
+                .into(),
+            );
+        }
         if vis(StatusPill::Osnap) {
             pills.push(
                 osnap_btn(
@@ -459,6 +483,17 @@ impl StatusBar {
                             Message::SyncViewportAnnotationScale,
                         ),
                         t!("Viewport / Annotation Scale Sync"),
+                    )
+                    .into(),
+                );
+            }
+        }
+        if vis(StatusPill::VpLock) {
+            if let Some(locked) = viewport_locked {
+                pills.push(
+                    tip(
+                        toggle_pill(crate::ui::icons::LOCK, locked, Message::ToggleViewportLock),
+                        t!("Lock/Unlock Viewport"),
                     )
                     .into(),
                 );

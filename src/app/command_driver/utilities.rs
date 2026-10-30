@@ -105,6 +105,7 @@ impl OpenCADStudio {
         self.grip_popup = None;
         self.grip_pending = None;
         self.visibility_popup = None;
+        self.table_popup = None;
         self.hover_dwell = None;
         self.ucs_grip_drag = None;
         self.ucs_icon_selected = false;
@@ -194,10 +195,28 @@ impl OpenCADStudio {
 
     pub(in crate::app) fn cancel_active_grip_edit(&mut self) -> bool {
         let i = self.active_tab;
+        // API v11/v12: a custom plugin-grip drag cancels through the same
+        // lifecycle exit every other interruption uses (Esc, another command
+        // starting, tab switches): the owning plugin gets the cancel phase
+        // and drops its preview state with zero writes — the drawing stays
+        // byte-identical. While the drag's SETTLE is streaming (the plugin
+        // write window), the watchdog owns the window instead: a cancel
+        // would race the plugin's authoritative writes.
+        #[cfg(not(target_arch = "wasm32"))]
+        let had_plugin_grip = {
+            let had_plugin_grip = self.tabs[i].active_plugin_grip.is_some();
+            if had_plugin_grip && !self.is_plugin_grip_settling() {
+                let _ = self.cancel_plugin_grip_drag();
+            }
+            had_plugin_grip && !self.is_plugin_grip_settling()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let had_plugin_grip = false;
         // Grip-menu toggles live only as long as the gesture.
         self.tabs[i].grip_copy = false;
         self.tabs[i].grip_base_pending = false;
         let had_grip = self.tabs[i].active_grip.take().is_some()
+            || had_plugin_grip
             || self.grip_add_provisional.is_some()
             || !self.grip_preview_handles.is_empty()
             || !self.grip_history_originals.is_empty();
@@ -409,8 +428,10 @@ impl OpenCADStudio {
             } else {
                 None
             };
-            if let Some(command) = self.tabs[i].active_cmd.as_mut() {
+            let tab = &mut self.tabs[i];
+            if let Some(command) = tab.active_cmd.as_mut() {
                 command.set_point_pick_context(context);
+                command.refresh_point_pick_scene(&tab.scene);
             }
         }
     }
@@ -574,6 +595,39 @@ impl OpenCADStudio {
         StepInput::SelectionComplete(kept)
     }
 
+    /// Drops entities on locked layers from a completed selection when the active
+    /// command rejects them (e.g. ssget ":L"), deselecting them and reporting
+    /// how many were on a locked layer.
+    pub(in crate::app) fn filter_locked_layer_selection(&mut self, input: StepInput) -> StepInput {
+        let StepInput::SelectionComplete(handles) = input else {
+            return input;
+        };
+        let i = self.active_tab;
+        if !self.tabs[i]
+            .active_cmd
+            .as_ref()
+            .is_some_and(|command| command.selection_rejects_locked_layers())
+        {
+            return StepInput::SelectionComplete(handles);
+        }
+        let (kept, dropped): (Vec<Handle>, Vec<Handle>) = handles.into_iter().partition(|handle| {
+            !self.tabs[i].scene.is_layer_locked(*handle)
+        });
+        for handle in &dropped {
+            self.tabs[i].scene.deselect_entity(*handle);
+        }
+        if !dropped.is_empty() {
+            let count = dropped.len();
+            self.command_line.push_info(&if count == 1 {
+                "1 was on a locked layer.".to_string()
+            } else {
+                format!("{count} were on a locked layer.")
+            });
+            self.refresh_properties();
+        }
+        StepInput::SelectionComplete(kept)
+    }
+
     /// What one selection step picked, as the reference words it: `N found`
     /// for the first step, `N found, M total`, `N found (D duplicate), M
     /// total` when some were chosen already, `N found, R removed, M total` in
@@ -684,6 +738,7 @@ impl OpenCADStudio {
         let input = self.filter_associative_dimension_selection(input);
         let input = self.filter_block_reference_selection(input);
         let input = self.filter_locked_point_cloud_selection(input);
+        let input = self.filter_locked_layer_selection(input);
         let input = self.filter_command_entity_selection(input);
         if let (Some(key), StepInput::SelectionComplete(kept)) = (gathering, &input) {
             self.selection_report = Some((key, kept.clone()));
@@ -814,9 +869,7 @@ impl OpenCADStudio {
                 command.inject_selection_entities(entities);
             }
         }
-        if matches!(&input, StepInput::Point(_)) {
-            self.refresh_command_point_pick_context(i);
-        }
+        self.refresh_command_point_pick_context(i);
         let ctrl = self.ctrl_down;
         let shift = self.shift_down;
         let picked_handle = if let StepInput::EntityPick(h, _) = &input {
@@ -947,18 +1000,36 @@ impl OpenCADStudio {
             || tokens[0].eq_ignore_ascii_case("XREF")
             // `VIEW WINDOW <name> <x1,y1> <x2,y2>` takes its arguments in one line.
             || tokens[0].eq_ignore_ascii_case("VIEW")
+            // A path after OPEN / SAVEAS may hold spaces; it is one answer.
+            || tokens[0].eq_ignore_ascii_case("OPEN")
+            || tokens[0].eq_ignore_ascii_case("SAVEAS")
+            // A calculator expression may hold spaces; it is one answer.
+            || tokens[0].eq_ignore_ascii_case("CAL")
+            || tokens[0].eq_ignore_ascii_case("QUICKCALC")
+            || tokens[0].eq_ignore_ascii_case("QC")
         {
             return self.dispatch_command(cmd);
         }
         // Close an earlier step first so only what the probe opens is dropped below.
         self.finish_pending_history(i);
-        let start_task = self.dispatch_command(tokens[0]);
+        let Some(start_task) = self.try_dispatch_command(tokens[0], false) else {
+            // The first word is no command; the whole line may still be one.
+            return self.dispatch_command(cmd);
+        };
+        self.clear_idle_tool_highlight();
         if self.tabs[i].active_cmd.is_none() {
             // Not an interactive tool — an inline-argument command (`PDMODE 3`).
             // The bare word only probed it: a step it kept without changing
             // anything is not an undo step of its own.
             self.drop_unchanged_pending_history(i);
-            return self.dispatch_command(cmd);
+            if let Some(task) = self.try_dispatch_command(cmd, false) {
+                self.clear_idle_tool_highlight();
+                return task;
+            }
+            // The command takes no words after it and has run: the rest of
+            // the line goes on to the next command, as Enter would send it.
+            let rest = tokens[1..].join(" ");
+            return Task::batch([start_task, self.run_command_line_streaming(&rest, finish)]);
         }
         let toks: Vec<String> = tokens.iter().map(|s| s.to_string()).collect();
         let finish_task = self.finish_active_command(&toks, finish);
@@ -1160,11 +1231,18 @@ impl OpenCADStudio {
 
     pub(in crate::app) fn feed_active_cmd(&mut self, token: &str) -> Task<Message> {
         let i = self.active_tab;
+        let trimmed = token.trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("ENTER")
+            || trimmed.eq_ignore_ascii_case("RETURN")
+        {
+            return self.feed_command(StepInput::Enter);
+        }
         // Object-pick step: the token is a handle (as returned by `query`).
         if self.tabs[i]
             .active_cmd
             .as_ref()
-            .is_some_and(|c| c.needs_entity_pick())
+            .is_some_and(|c| c.needs_entity_pick() || c.is_selection_gathering())
         {
             // Option keywords take precedence over the handle reading —
             // "F"/"C"/"E" are valid hex, but during TRIM/EXTEND they are the
@@ -1176,6 +1254,9 @@ impl OpenCADStudio {
                 .and_then(|c| c.on_text_input(token));
             if let Some(r) = consumed {
                 return self.apply_cmd_result(r);
+            }
+            if let Some(task) = self.try_selection_keyword(token) {
+                return task;
             }
             let accepts_points = self.tabs[i]
                 .active_cmd
