@@ -42,7 +42,12 @@ pub fn open_url<Message: Send + 'static>(
     url: &str,
     parent: Option<iced::window::Id>,
 ) -> iced::Task<Message> {
-    let url = url.to_string();
+    // SIPIL: jaring pengaman (sama dengan cabang web): tautan ke proyek upstream tidak pernah dibuka.
+    if crate::sipil::is_blocked_url(url) {
+        return iced::Task::none();
+    }
+    // SIPIL: LICENSE.txt, SOURCE.txt, OFL-PTSans.txt: dokumen pendamping di folder exe, bukan folder kerja.
+    let url = crate::sipil::resolve_local_document(url);
     match parent {
         Some(parent) => iced::window::run(parent, move |window| {
             open_url_linux(&url, linux_activation_token(window));
@@ -103,6 +108,12 @@ fn open_url_linux(url: &str, activation_token: Option<String>) {
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
 pub fn open_url<Message>(url: &str, _parent: Option<iced::window::Id>) -> iced::Task<Message> {
+    // SIPIL: jaring pengaman (sama dengan cabang web): tautan ke proyek upstream tidak pernah dibuka.
+    if crate::sipil::is_blocked_url(url) {
+        return iced::Task::none();
+    }
+    // SIPIL: dokumen pendamping di folder exe, bukan folder kerja.
+    let url = crate::sipil::resolve_local_document(url);
     let _ = open::that_detached(url);
     iced::Task::none()
 }

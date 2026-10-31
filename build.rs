@@ -114,6 +114,7 @@ fn main() {
     );
 
     println!("cargo:rerun-if-env-changed=OCS_PATREON_TOKEN");
+    println!("cargo:rerun-if-changed=src/sipil.rs");
 
     // Release builds generate the icon before compiling.
     #[cfg(windows)]
@@ -122,13 +123,35 @@ fn main() {
         if Path::new("packaging/windows/AppIcon.ico").exists() {
             let mut res = winresource::WindowsResource::new();
             res.set_icon("packaging/windows/AppIcon.ico");
-            res.set("ProductVersion", &full_version);
-            res.set("FileVersion", &app_version);
+            // SIPIL: identitas SipilCAD di Properties > Details; versi SipilCAD (src/sipil.rs) lebih dulu,
+            // versi upstream menyusul di ProductVersion.
+            let sipil_version = sipil_app_version().unwrap_or_else(|| app_version.clone());
+            res.set("ProductName", "SipilCAD");
+            res.set("FileDescription", "SipilCAD");
+            res.set("InternalName", "SipilCAD");
+            res.set("OriginalFilename", "SipilCAD.exe");
+            res.set("CompanyName", "SipilStock");
+            res.set("LegalCopyright", "GPL-3.0-or-later. Based on Open CAD Studio by Hakan Seven.");
+            res.set("ProductVersion", &format!("{sipil_version} (Open CAD Studio {full_version})"));
+            res.set("FileVersion", &sipil_version);
             if let Err(e) = res.compile() {
                 println!("cargo:warning=failed to embed Windows icon: {e}");
             }
         }
     }
+}
+
+/// SIPIL: versi SipilCAD (`APP_VERSION` di src/sipil.rs), dibaca sebagai teks karena build.rs
+/// tidak bisa memakai crate yang sedang dibangun.
+#[cfg(windows)]
+fn sipil_app_version() -> Option<String> {
+    let source = std::fs::read_to_string("src/sipil.rs").ok()?;
+    let line = source
+        .lines()
+        .find(|line| line.trim_start().starts_with("pub const APP_VERSION"))?;
+    let start = line.find('"')? + 1;
+    let end = line.rfind('"')?;
+    (end > start).then(|| line[start..end].to_string())
 }
 
 /// Runs `git` with `args` and returns trimmed stdout, or `None` when git is

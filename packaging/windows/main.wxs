@@ -2,9 +2,9 @@
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
   <Product
     Id='*'
-    Name='Open CAD Studio'
-    UpgradeCode='bd6bceab-6c7a-4ce2-a62d-6ef06a92f8b1'
-    Manufacturer='Hakan Seven'
+    Name='SipilCAD'
+    UpgradeCode='283c746d-d1c4-5e05-9422-ace7311cec6a'
+    Manufacturer='SipilStock'
     Language='1033'
     Codepage='1252'
     Version='$(var.Version)'>
@@ -13,7 +13,7 @@
       Id='*'
       Keywords='!(loc.Installer)'
       Description='!(loc.InstallerDescription)'
-      Manufacturer='Hakan Seven'
+      Manufacturer='SipilStock'
       InstallerVersion='450'
       Languages='1033'
       Compressed='yes'
@@ -22,34 +22,35 @@
 
     <MajorUpgrade
       Schedule='afterInstallInitialize'
+      AllowSameVersionUpgrades='yes'
       DowngradeErrorMessage='!(loc.DowngradeError)' />
 
     <Media Id='1' Cabinet='product.cab' EmbedCab='yes' />
 
     <Icon Id='AppIcon.ico' SourceFile='$(var.Icon)' />
     <Property Id='ARPPRODUCTICON' Value='AppIcon.ico' />
-    <Property Id='ARPHELPLINK' Value='https://github.com/HakanSeven12/OpenCADStudio' />
-    <Property Id='ARPURLINFOABOUT' Value='https://github.com/HakanSeven12/OpenCADStudio' />
-    <Property Id='ARPURLUPDATEINFO' Value='https://github.com/HakanSeven12/OpenCADStudio/releases' />
-    <Property Id='ARPCONTACT' Value='Hakan Seven' />
+    <Property Id='ARPHELPLINK' Value='https://sipilstock.com/sipilcad/' />
+    <Property Id='ARPURLINFOABOUT' Value='https://sipilstock.com/sipilcad/' />
+    <Property Id='ARPURLUPDATEINFO' Value='https://sipilstock.com/sipilcad/' />
+    <Property Id='ARPCONTACT' Value='SipilStock' />
     <Property Id='ARPCOMMENTS' Value='!(loc.ApplicationDescription)' />
     <Property Id='ARPNOREPAIR' Value='1' />
 
     <Directory Id='TARGETDIR' Name='SourceDir'>
       <Directory Id='ProgramFiles64Folder'>
-        <Directory Id='APPLICATIONROOTDIRECTORY' Name='Open CAD Studio'>
+        <Directory Id='APPLICATIONROOTDIRECTORY' Name='SipilCAD'>
 
-          <Component Id='MainExecutable' Guid='2900c116-e9a5-4650-8a4c-48c0987d1a33' Win64='yes'>
+          <Component Id='MainExecutable' Guid='2e67ca47-3069-5a8f-9720-4e2f2060d64b' Win64='yes'>
             <File
-              Id='OpenCADStudioEXE'
-              Name='OpenCADStudio.exe'
+              Id='SipilCADEXE'
+              Name='SipilCAD.exe'
               DiskId='1'
               Source='$(var.Source)'
               KeyPath='yes'>
               <Shortcut
                 Id='StartMenuShortcut'
                 Directory='ProgramMenuDir'
-                Name='Open CAD Studio'
+                Name='SipilCAD'
                 Description='!(loc.Launch)'
                 WorkingDirectory='APPLICATIONROOTDIRECTORY'
                 Icon='AppIcon.ico'
@@ -63,98 +64,102 @@
               Name='dwg_thumbnailer_win.dll'
               DiskId='1'
               Source='target\release\dwg_thumbnailer_win.dll' />
+            <File Id='LicenseTxt' Name='LICENSE.txt' DiskId='1' Source='$(var.Docs)\LICENSE.txt' />
+            <File Id='SourceTxt' Name='SOURCE.txt' DiskId='1' Source='$(var.Docs)\SOURCE.txt' />
+            <File Id='ThirdPartyLicensesTxt' Name='THIRD_PARTY_LICENSES.txt' DiskId='1' Source='$(var.Docs)\THIRD_PARTY_LICENSES.txt' />
+            <File Id='OflPtSansTxt' Name='OFL-PTSans.txt' DiskId='1' Source='$(var.Docs)\OFL-PTSans.txt' />
             <ProgId
-              Id='OpenCADStudio.DWG'
+              Id='SipilCAD.DWG'
               Description='!(loc.DwgDrawing)'
               Icon='DwgIco'
               IconIndex='0'>
               <Extension Id='dwg' ContentType='image/vnd.dwg'>
-                <Verb Id='open' Command='!(loc.Open)' TargetFile='OpenCADStudioEXE' Argument='"%1"' />
+                <Verb Id='open' Command='!(loc.Open)' TargetFile='SipilCADEXE' Argument='"%1"' />
               </Extension>
             </ProgId>
 
             <ProgId
-              Id='OpenCADStudio.DXF'
+              Id='SipilCAD.DXF'
               Description='!(loc.DxfDrawing)'
               Icon='DxfIco'
               IconIndex='0'>
               <Extension Id='dxf' ContentType='image/vnd.dxf'>
-                <Verb Id='open' Command='!(loc.Open)' TargetFile='OpenCADStudioEXE' Argument='"%1"' />
+                <Verb Id='open' Command='!(loc.Open)' TargetFile='SipilCADEXE' Argument='"%1"' />
               </Extension>
             </ProgId>
           </Component>
-          <Component Id='DefaultPrograms' Guid='6f3e9b2a-1c4d-4f8a-9b7e-2d5a8c1f0e63' Win64='yes'>
+          <Component Id='DefaultPrograms' Guid='e1eacc21-069d-5fcc-8ab6-a5d3cae687c1' Win64='yes'>
             <RegistryValue
               Root='HKLM'
-              Key='SOFTWARE\Classes\Applications\OpenCADStudio.exe\DefaultIcon'
+              Key='SOFTWARE\Classes\Applications\SipilCAD.exe\DefaultIcon'
               Type='string'
-              Value='[APPLICATIONROOTDIRECTORY]OpenCADStudio.exe,0'
+              Value='[APPLICATIONROOTDIRECTORY]SipilCAD.exe,0'
               KeyPath='yes' />
             <RegistryValue
               Root='HKLM'
-              Key='SOFTWARE\Classes\Applications\OpenCADStudio.exe'
+              Key='SOFTWARE\Classes\Applications\SipilCAD.exe'
               Name='FriendlyAppName'
               Type='string'
-              Value='Open CAD Studio' />
+              Value='SipilCAD' />
             <RegistryValue
               Root='HKLM'
-              Key='SOFTWARE\Classes\Applications\OpenCADStudio.exe\shell\open\command'
+              Key='SOFTWARE\Classes\Applications\SipilCAD.exe\shell\open\command'
               Type='string'
-              Value='"[APPLICATIONROOTDIRECTORY]OpenCADStudio.exe" "%1"' />
+              Value='"[APPLICATIONROOTDIRECTORY]SipilCAD.exe" "%1"' />
             <RegistryValue
               Root='HKLM'
-              Key='SOFTWARE\Classes\Applications\OpenCADStudio.exe\SupportedTypes'
+              Key='SOFTWARE\Classes\Applications\SipilCAD.exe\SupportedTypes'
               Name='.dwg'
               Type='string'
               Value='' />
             <RegistryValue
               Root='HKLM'
-              Key='SOFTWARE\Classes\Applications\OpenCADStudio.exe\SupportedTypes'
+              Key='SOFTWARE\Classes\Applications\SipilCAD.exe\SupportedTypes'
               Name='.dxf'
               Type='string'
               Value='' />
             <RegistryValue
               Root='HKLM'
-              Key='Software\Open CAD Studio\Capabilities'
+              Key='Software\SipilCAD\Capabilities'
               Name='ApplicationName'
               Type='string'
-              Value='Open CAD Studio' />
+              Value='SipilCAD' />
             <RegistryValue
               Root='HKLM'
-              Key='Software\Open CAD Studio\Capabilities'
+              Key='Software\SipilCAD\Capabilities'
               Name='ApplicationDescription'
               Type='string'
               Value='!(loc.ApplicationDescription)' />
             <RegistryValue
               Root='HKLM'
-              Key='Software\Open CAD Studio\Capabilities\FileAssociations'
+              Key='Software\SipilCAD\Capabilities\FileAssociations'
               Name='.dwg'
               Type='string'
-              Value='OpenCADStudio.DWG' />
+              Value='SipilCAD.DWG' />
             <RegistryValue
               Root='HKLM'
-              Key='Software\Open CAD Studio\Capabilities\FileAssociations'
+              Key='Software\SipilCAD\Capabilities\FileAssociations'
               Name='.dxf'
               Type='string'
-              Value='OpenCADStudio.DXF' />
+              Value='SipilCAD.DXF' />
             <RegistryValue
               Root='HKLM'
               Key='Software\RegisteredApplications'
-              Name='Open CAD Studio'
+              Name='SipilCAD'
               Type='string'
-              Value='Software\Open CAD Studio\Capabilities' />
+              Value='Software\SipilCAD\Capabilities' />
           </Component>
 
         </Directory>
       </Directory>
 
       <Directory Id='ProgramMenuFolder'>
-        <Directory Id='ProgramMenuDir' Name='Open CAD Studio'>
-          <Component Id='ProgramMenuDirComp' Guid='34a788ba-f9d4-4e73-b1ff-9eb8749b369e'>
+        <Directory Id='ProgramMenuDir' Name='SipilCAD'>
+          <Component Id='ProgramMenuDirComp' Guid='54e59ef4-aa3b-5cfa-afc9-8996d03362f7'>
             <RemoveFolder Id='ProgramMenuDir' On='uninstall' />
             <RegistryValue
               Root='HKCU'
-              Key='Software\Open CAD Studio'
+              Key='Software\SipilCAD'
               Name='installed'
               Type='integer'
               Value='1'
@@ -163,18 +168,18 @@
         </Directory>
       </Directory>
       <Directory Id='DesktopFolder' Name='!(loc.Desktop)'>
-        <Component Id='DesktopShortcutComp' Guid='c5c7f1c4-3d8a-4efd-b049-4662d9143dcd'>
+        <Component Id='DesktopShortcutComp' Guid='10b21d43-b3f3-5a75-9c67-329f21fe12f5'>
           <Shortcut
             Id='DesktopShortcut'
-            Name='Open CAD Studio'
+            Name='SipilCAD'
             Description='!(loc.Launch)'
-            Target='[APPLICATIONROOTDIRECTORY]OpenCADStudio.exe'
+            Target='[APPLICATIONROOTDIRECTORY]SipilCAD.exe'
             WorkingDirectory='APPLICATIONROOTDIRECTORY'
             Icon='AppIcon.ico'
             IconIndex='0' />
           <RegistryValue
             Root='HKCU'
-            Key='Software\Open CAD Studio'
+            Key='Software\SipilCAD'
             Name='desktop_shortcut'
             Type='integer'
             Value='1'
@@ -183,7 +188,7 @@
       </Directory>
     </Directory>
 
-    <Feature Id='Complete' Title='Open CAD Studio' Level='1' Display='expand'>
+    <Feature Id='Complete' Title='SipilCAD' Level='1' Display='expand'>
       <ComponentRef Id='MainExecutable' />
       <ComponentRef Id='DefaultPrograms' />
       <ComponentRef Id='ProgramMenuDirComp' />
@@ -196,7 +201,7 @@
         <ComponentRef Id='DesktopShortcutComp' />
       </Feature>
     </Feature>
-    <UIRef Id='OpenCADStudioUI' />
+    <UIRef Id='SipilCADUI' />
 
   </Product>
 </Wix>

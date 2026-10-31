@@ -186,7 +186,7 @@ mod windows_impl {
     }
 
     // Must match the RegisteredApplications value name in packaging/windows/main.wxs.
-    const APP_REGISTRY_NAME: &str = "Open CAD Studio";
+    const APP_REGISTRY_NAME: &str = "SipilCAD";
 
     pub(super) fn set_default() -> Result<String, String> {
         unsafe {
@@ -248,7 +248,7 @@ mod windows_impl {
             .spawn()
             .ok()?;
         Some(
-            "Opened Settings → Default apps — choose Open CAD Studio for .dwg / .dxf there."
+            "Opened Settings → Default apps — choose SipilCAD for .dwg / .dxf there."
                 .to_string(),
         )
     }
@@ -263,11 +263,11 @@ mod windows_impl {
     /// (they point at now-deleted ProgIDs, which Windows simply ignores).
     pub(super) fn unregister_handler() -> Result<(), String> {
         for key in [
-            r"Software\Classes\Applications\OpenCADStudio.exe",
-            r"Software\Classes\OpenCADStudio.DWG",
-            r"Software\Classes\OpenCADStudio.DXF",
-            r"Software\Classes\OpenCADStudio.BAK",
-            r"Software\Open CAD Studio",
+            r"Software\Classes\Applications\SipilCAD.exe",
+            r"Software\Classes\SipilCAD.DWG",
+            r"Software\Classes\SipilCAD.DXF",
+            r"Software\Classes\SipilCAD.BAK",
+            r"Software\SipilCAD",
         ] {
             let w = wide(key);
             unsafe {
@@ -349,7 +349,7 @@ mod windows_impl {
         }
         let dll = dll.to_string_lossy();
         let clsid_base = format!(r"Software\Classes\CLSID\{THUMB_CLSID}");
-        set_string(&clsid_base, None, "OpenCADStudio DWG Thumbnail Provider")?;
+        set_string(&clsid_base, None, "SipilCAD DWG Thumbnail Provider")?;
         set_string(&format!(r"{clsid_base}\InprocServer32"), None, &dll)?;
         set_string(
             &format!(r"{clsid_base}\InprocServer32"),
@@ -384,22 +384,22 @@ mod windows_impl {
 
     /// Register the running .exe (per-user, HKCU) so the portable build matches
     /// what the MSI provides machine-wide:
-    ///   * an `Applications\OpenCADStudio.exe` entry → listed under "Open with";
+    ///   * an `Applications\SipilCAD.exe` entry → listed under "Open with";
     ///   * ProgIDs + a Capabilities / RegisteredApplications block → the app is
     ///     a default-app candidate, so the in-app "set as default" prompt's OS
-    ///     dialog (LaunchAdvancedAssociationUI "Open CAD Studio") finds it.
+    ///     dialog (LaunchAdvancedAssociationUI "SipilCAD") finds it.
     pub(super) fn register_handler() -> Result<(), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe = exe.to_string_lossy().to_string();
 
         // ── "Open with" exe listing ─────────────────────────────────────────
-        const APP_BASE: &str = r"Software\Classes\Applications\OpenCADStudio.exe";
+        const APP_BASE: &str = r"Software\Classes\Applications\SipilCAD.exe";
         set_string(
             &format!(r"{APP_BASE}\shell\open\command"),
             None,
             &format!("\"{exe}\" \"%1\""),
         )?;
-        set_string(APP_BASE, Some("FriendlyAppName"), "Open CAD Studio")?;
+        set_string(APP_BASE, Some("FriendlyAppName"), "SipilCAD")?;
         // DefaultIcon is what Windows uses to show the app icon in the
         // "Open with" context-menu list and the "Choose another app" picker.
         set_string(
@@ -417,23 +417,23 @@ mod windows_impl {
         // ── ProgIDs (per-user mirror of the MSI's) ──────────────────────────
         // The Capabilities entries below point at these, and they must resolve
         // to a real open command for "set as default" to apply them.
-        register_progid(&exe, "OpenCADStudio.DWG", "DWG Drawing")?;
-        register_progid(&exe, "OpenCADStudio.DXF", "DXF Drawing")?;
-        register_progid(&exe, "OpenCADStudio.BAK", "CAD Backup")?;
+        register_progid(&exe, "SipilCAD.DWG", "DWG Drawing")?;
+        register_progid(&exe, "SipilCAD.DXF", "DXF Drawing")?;
+        register_progid(&exe, "SipilCAD.BAK", "CAD Backup")?;
         // Also offer the ProgIDs in each extension's Open-with list.
         set_string(
             r"Software\Classes\.dwg\OpenWithProgids",
-            Some("OpenCADStudio.DWG"),
+            Some("SipilCAD.DWG"),
             "",
         )?;
         set_string(
             r"Software\Classes\.dxf\OpenWithProgids",
-            Some("OpenCADStudio.DXF"),
+            Some("SipilCAD.DXF"),
             "",
         )?;
         set_string(
             r"Software\Classes\.bak\OpenWithProgids",
-            Some("OpenCADStudio.BAK"),
+            Some("SipilCAD.BAK"),
             "",
         )?;
 
@@ -441,9 +441,9 @@ mod windows_impl {
         // Mirrors the MSI's DefaultPrograms component, but per-user, so the
         // portable build is a Default-Apps candidate too. The value name in
         // RegisteredApplications must equal the name passed to
-        // LaunchAdvancedAssociationUI ("Open CAD Studio").
-        const CAP: &str = r"Software\Open CAD Studio\Capabilities";
-        set_string(CAP, Some("ApplicationName"), "Open CAD Studio")?;
+        // LaunchAdvancedAssociationUI ("SipilCAD").
+        const CAP: &str = r"Software\SipilCAD\Capabilities";
+        set_string(CAP, Some("ApplicationName"), "SipilCAD")?;
         set_string(
             CAP,
             Some("ApplicationDescription"),
@@ -452,22 +452,22 @@ mod windows_impl {
         set_string(
             &format!(r"{CAP}\FileAssociations"),
             Some(".dwg"),
-            "OpenCADStudio.DWG",
+            "SipilCAD.DWG",
         )?;
         set_string(
             &format!(r"{CAP}\FileAssociations"),
             Some(".dxf"),
-            "OpenCADStudio.DXF",
+            "SipilCAD.DXF",
         )?;
         set_string(
             &format!(r"{CAP}\FileAssociations"),
             Some(".bak"),
-            "OpenCADStudio.BAK",
+            "SipilCAD.BAK",
         )?;
         set_string(
             r"Software\RegisteredApplications",
-            Some("Open CAD Studio"),
-            r"Software\Open CAD Studio\Capabilities",
+            Some("SipilCAD"),
+            r"Software\SipilCAD\Capabilities",
         )?;
         Ok(())
     }

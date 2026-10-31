@@ -5856,10 +5856,16 @@ impl OpenCADStudio {
         let mut s = state;
         s.main_window = Some(id);
         let open_main = open_task.map(|_| Message::Noop);
-        let check_update = Task::perform(
-            crate::io::update_check::check_for_update(),
-            Message::UpdateCheckResult,
-        );
+        // SIPIL: cek rilis, daftar Patreon, playlist video, dan Discussions menghubungi proyek upstream.
+        // Build ini tidak menjalankannya (HIDE_UPSTREAM_LINKS); halaman Start-nya juga menyembunyikannya.
+        let check_update = if crate::sipil::HIDE_UPSTREAM_LINKS {
+            Task::none()
+        } else {
+            Task::perform(
+                crate::io::update_check::check_for_update(),
+                Message::UpdateCheckResult,
+            )
+        };
         let focus_cmd = s.focus_cmd_input();
         // Startup configuration from the command line (see `cli`). File
         // arguments — also how the OS file association launches us when
@@ -5914,10 +5920,14 @@ impl OpenCADStudio {
         }
         // Fetch the Patreon supporters list once at boot for the Start page.
         #[cfg(not(target_arch = "wasm32"))]
-        let patrons_fetch = Task::perform(
-            async { crate::patreon::fetch_patrons() },
-            Message::PatronsFetched,
-        );
+        let patrons_fetch = if crate::sipil::HIDE_UPSTREAM_LINKS {
+            Task::none()
+        } else {
+            Task::perform(
+                async { crate::patreon::fetch_patrons() },
+                Message::PatronsFetched,
+            )
+        };
         #[cfg(target_arch = "wasm32")]
         let patrons_fetch = Task::none();
         // Tutorial videos: show the on-disk cache instantly, refresh from the
@@ -5926,7 +5936,7 @@ impl OpenCADStudio {
         // requests would otherwise sit on the async executor and hold up the
         // rest of the boot tasks (the Start page waited on it).
         #[cfg(not(target_arch = "wasm32"))]
-        let videos_fetch = {
+        let videos_fetch = if !crate::sipil::HIDE_UPSTREAM_LINKS {
             s.set_videos(crate::videos::load_cached());
             s.videos_loading = true;
             let (tx, rx) = iced::futures::channel::oneshot::channel();
@@ -5940,13 +5950,15 @@ impl OpenCADStudio {
                 },
                 Message::VideosFetched,
             )
+        } else {
+            Task::none()
         };
         #[cfg(target_arch = "wasm32")]
         let videos_fetch = Task::none();
         // GitHub Discussions: seed from the last successful fetch, then refresh
         // the public feed and pinned section on a background thread.
         #[cfg(not(target_arch = "wasm32"))]
-        let discussions_fetch = {
+        let discussions_fetch = if !crate::sipil::HIDE_UPSTREAM_LINKS {
             s.discussions = crate::discussions::load_cached();
             s.discussions_loading = true;
             let (tx, rx) = iced::futures::channel::oneshot::channel();
@@ -5960,6 +5972,8 @@ impl OpenCADStudio {
                 },
                 Message::DiscussionsFetched,
             )
+        } else {
+            Task::none()
         };
         #[cfg(target_arch = "wasm32")]
         let discussions_fetch = Task::none();
@@ -6104,14 +6118,10 @@ pub fn run() -> iced::Result {
         if let Some(tab) = state.tabs.get(state.active_tab) {
             let dot = if tab.dirty { "● " } else { "" };
             let name = tab.tab_display_name();
-            format!(
-                "{}Open CAD Studio {} - {}",
-                dot,
-                env!("OCS_APP_VERSION"),
-                name
-            )
+            // SIPIL: nama dan versi SipilCAD (bukan versi upstream) di judul jendela.
+            format!("{}SipilCAD {} - {}", dot, crate::sipil::APP_VERSION, name)
         } else {
-            concat!("Open CAD Studio ", env!("OCS_APP_VERSION")).to_string()
+            format!("SipilCAD {}", crate::sipil::APP_VERSION)
         }
     })
     .theme(|state: &OpenCADStudio, _| state.active_theme.clone())
@@ -6156,9 +6166,7 @@ pub fn run_web() -> iced::Result {
         OpenCADStudio::view_main,
     )
     .subscription(OpenCADStudio::subscription)
-    .title(|_state: &OpenCADStudio| {
-        concat!("Open CAD Studio ", env!("OCS_APP_VERSION")).to_string()
-    })
+    .title(|_state: &OpenCADStudio| format!("SipilCAD {}", crate::sipil::APP_VERSION))
     .theme(|state: &OpenCADStudio| state.active_theme.clone())
     .backend(iced::Backend::Hardware(iced::backend::Api::OpenGL))
     .font(iced_aw::ICED_AW_FONT_BYTES)

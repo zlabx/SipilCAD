@@ -1,0 +1,39 @@
+# SIPIL: konfigurasi cargo-about untuk THIRD_PARTY_LICENSES.txt pada build desktop Windows (exe dan MSI).
+# Sama dengan about.toml (build web), kecuali target. Workflow desktop menyalinnya menjadi about.toml di tree
+# build sebelum menjalankan cargo-about; lihat BUILD.md.
+#
+# Hanya crate yang masuk ke exe Windows (target x86_64-pc-windows-msvc) yang dicantumkan. Dependensi build dan uji
+# tidak ikut tersaji ke pengguna, jadi diabaikan.
+targets = ["x86_64-pc-windows-msvc"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Lisensi yang diterima. Lisensi baru dari dependensi hasil sinkron upstream membuat langkah ini
+# gagal dengan daftar crate-nya: periksa lisensinya, lalu tambahkan di sini bila sesuai.
+accepted = [
+    # Permisif (hampir seluruh crate pihak ketiga).
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    # Hanya build native: webpki-roots (bundel akar CA Mozilla untuk koneksi HTTPS, dependensi ureq/rustls). Lisensi data
+    # permisif yang hanya mewajibkan atribusi; ditinjau Oktober 2026. Tidak ada di build web, jadi tidak di about.toml.
+    "CDLA-Permissive-2.0",
+    # MIT-0 (MIT tanpa kewajiban atribusi): borrow-or-share, dependensi baru sejak v2026.42 lewat
+    # jsonschema -> referencing -> fluent-uri; ditinjau Oktober 2026.
+    "MIT-0",
+    # Copyleft yang ditinjau (Oktober 2026): MPL-2.0 (opencadcodec, opencadkernel, opencadgraph) dan
+    # LGPL-2.1-or-later (opencadkernel-constraints) milik penulis upstream; GPL-3.0 untuk aplikasi
+    # ini dan ocs_plugin_api; OFL-1.1 untuk font yang dibundel aplikasi.
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "OFL-1.1",
+]

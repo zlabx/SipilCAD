@@ -21,6 +21,10 @@ pub(crate) const REGISTRY_URL: &str =
 
 /// Fetch the curated plugin registry (`plugins/registry.json`).
 pub fn fetch_registry() -> Result<Vec<RegistryEntry>, String> {
+    // SIPIL: daftar plugin upstream tidak diambil dari build ini (Plugin Manager tersembunyi, v1 tanpa plugin).
+    if crate::sipil::HIDE_UPSTREAM_LINKS {
+        return Err("plugin registry is not available in this build".to_string());
+    }
     let body = download_string(REGISTRY_URL)?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let arr = json.as_array().ok_or("registry is not a JSON array")?;

@@ -6,13 +6,13 @@
     <WixVariable Id='WixUILicenseRtf' Value='$(var.License)' />
     <CustomAction
       Id='LaunchApplication'
-      FileKey='OpenCADStudioEXE'
+      FileKey='SipilCADEXE'
       ExeCommand=''
       Execute='immediate'
       Return='asyncNoWait'
       Impersonate='yes' />
 
-    <UI Id='OpenCADStudioUI'>
+    <UI Id='SipilCADUI'>
       <UIRef Id='WixUI_FeatureTree' />
       <Publish
         Dialog='ExitDialog'

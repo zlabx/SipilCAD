@@ -57,6 +57,22 @@ pub fn is_blocked_url(url: &str) -> bool {
     BLOCKED_URL_PARTS.iter().any(|part| url.contains(*part))
 }
 
+/// Build desktop: dokumen pendamping (LICENSE.txt, SOURCE.txt, OFL-PTSans.txt) dipasang di folder yang sama dengan exe.
+/// Tombol di dialog About mengirim path relatifnya lewat `open_url`; di web itu relatif terhadap halaman, tetapi di desktop
+/// relatif terhadap folder kerja, yang bisa folder gambar bila aplikasi dibuka dari asosiasi file. Fungsi ini mengubah hanya
+/// ketiga nama itu menjadi path absolut di folder exe (bila berkasnya ada); URL lain dan hyperlink pengguna tidak disentuh.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resolve_local_document(url: &str) -> String {
+    if ![LICENSE_PATH, SOURCE_PATH, FONT_PATH].contains(&url) {
+        return url.to_string();
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(url)))
+        .filter(|path| path.is_file())
+        .map_or_else(|| url.to_string(), |path| path.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +156,16 @@ mod tests {
             assert!(!path.starts_with('/') && !path.contains("://"), "harus relatif: {path}");
             assert!(path.ends_with(".txt") && !path.contains('/'), "harus berkas .txt di folder yang sama: {path}");
         }
+    }
+
+    /// Hanya tiga dokumen pendamping yang diselesaikan; yang lain lewat apa adanya.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn resolve_local_document_only_touches_companion_documents() {
+        for url in ["https://sipilstock.com/sipilcad/", "mailto:orang@example.com", "spesifikasi.pdf", "C:\\gambar\\a.dwg"] {
+            assert_eq!(resolve_local_document(url), url);
+        }
+        // Berkas pendamping yang tidak ada di folder exe uji: tetap relatif, tidak jadi path ngawur.
+        assert_eq!(resolve_local_document(LICENSE_PATH), LICENSE_PATH);
     }
 }

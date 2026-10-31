@@ -466,7 +466,7 @@ pub fn view_window<'a>(
             iced::widget::checkbox(file_assoc_enabled)
                 .on_toggle(Message::FileAssocChanged)
                 .size(15),
-            text(crate::t!("Open .dwg and .dxf files with Open CAD Studio")).size(12),
+            text(crate::t!("Open .dwg and .dxf files with SipilCAD")).size(12),
         ]
         .spacing(8)
         .align_y(iced::Center),

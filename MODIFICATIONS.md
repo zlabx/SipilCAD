@@ -31,15 +31,22 @@ GPL-3.0. Changes made by the rebrand overlay (GPL-3.0 section 5(a)):
 
 Additional changes applied by the build after those substitutions:
 
+- modified: `build.rs`
 - modified: `src/app/commands/view.rs`
 - modified: `src/app/config.rs`
 - modified: `src/app/mod.rs`
 - modified: `src/app/startup.rs`
 - modified: `src/app/view/mod.rs`
+- modified: `src/cli.rs`
+- modified: `src/io/file_association.rs`
 - modified: `src/lib.rs`
+- modified: `src/plugin/marketplace.rs`
 - modified: `src/sys.rs`
 - modified: `src/ui/window/about.rs`
+- modified: `src/ui/window/missing_fonts.rs`
 - modified: `src/ui/window/options.rs`
+- modified: `src/ui/window/options/graphics.rs`
+- modified: `src/ui/window/options/spacemouse.rs`
 - modified: `src/ui/window/xref_help.rs`
 - modified: `web-app.html`
 - modified: `web/app.webmanifest`
@@ -48,11 +55,15 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `BUILD.md`
 - added or replaced: `README.md`
 - added or replaced: `SOURCE.txt.in`
+- added or replaced: `about-windows.toml`
 - added or replaced: `about.hbs`
 - added or replaced: `about.toml`
 - added or replaced: `assets/LOGO.md`
 - added or replaced: `assets/logo-small.svg`
 - added or replaced: `assets/logo.svg`
+- added or replaced: `packaging/windows/main.wxs`
+- added or replaced: `packaging/windows/strings.en-US.wxl`
+- added or replaced: `packaging/windows/ui.wxs`
 - added or replaced: `scripts/sipil-licenses.sh`
 - added or replaced: `scripts/sipil-postbuild.py`
 - added or replaced: `scripts/sipil-tools.sh`
