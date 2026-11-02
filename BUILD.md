@@ -38,8 +38,9 @@ Exe dan installer MSI dibangun dari commit yang sama (tag `build-...`), bukan da
 (Visual Studio Build Tools, WiX 3, ImageMagick sudah ada di runner); dari akar repositori ini:
 
 ```bash
-# 1. ikon (ImageMagick): aplikasi dari logo SipilCAD, berkas DWG/DXF dari SVG mimetype
-magick assets/logo.svg -define icon:auto-resize=16,24,32,48,64,128,256 packaging/windows/AppIcon.ico
+# 1. ikon (ImageMagick): aplikasi dari logo SipilCAD, berkas DWG/DXF dari SVG mimetype. WAJIB -background none: tanpanya ImageMagick
+#    memberi latar putih opak dan ikon desktop jadi kotak putih (alpha 255 di semua piksel)
+magick -background none assets/logo.svg -define icon:auto-resize=16,24,32,48,64,128,256 packaging/windows/AppIcon.ico
 magick -background none -density 1536 assets/mimetypes/image-vnd.dwg.svg -define icon:auto-resize=16,24,32,48,64,128,256 packaging/windows/dwg.ico
 magick -background none -density 1536 assets/mimetypes/image-vnd.dxf.svg -define icon:auto-resize=16,24,32,48,64,128,256 packaging/windows/dxf.ico
 
@@ -50,7 +51,9 @@ cargo build --locked --release -p dwg-thumbnailer-win
 # 3. SipilCAD.exe = target/release/OpenCADStudio.exe diganti nama (nama target Cargo tetap OpenCADStudio karena build web memakainya)
 # 4. dokumen pendamping: LICENSE.txt (dari LICENSE), SOURCE.txt, OFL-PTSans.txt, THIRD_PARTY_LICENSES.txt
 #    (cargo-about 0.9.2 versi Windows, SHA-256 dicek; about-windows.toml disalin menjadi about.toml, target x86_64-pc-windows-msvc)
-# 5. MSI: candle -arch x64 -dVersion=<tahun-2000>.<nomor>.0 -dSource=SipilCAD.exe -dIcon=AppIcon.ico -dLicense=License.rtf -dDocs=<folder dokumen> main.wxs ui.wxs
+# 5. installer per-pengguna (Inno Setup 6, dipakai SipilStock Apps): ISCC /DMyAppVersion=2027.0 /DMyAppVersionInfo=2027.0.0.0 /DDistDir=<dir> /DOutDir=<dir> packaging\windows\sipilcad.iss
+#    <dir> berisi SipilCAD.exe, dwg_thumbnailer_win.dll, AppIcon.ico, dwg.ico, dxf.ico dan docs\ (LICENSE/SOURCE/THIRD_PARTY_LICENSES/OFL-PTSans)
+# 6. MSI (per-mesin): candle -arch x64 -dVersion=<tahun-2000>.<nomor>.0 -dSource=SipilCAD.exe -dIcon=AppIcon.ico -dLicense=License.rtf -dDocs=<folder dokumen> main.wxs ui.wxs
 #         light main.wixobj ui.wixobj -ext WixUIExtension -cultures:en-us -loc strings.en-US.wxl
 ```
 

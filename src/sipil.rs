@@ -57,6 +57,18 @@ pub fn is_blocked_url(url: &str) -> bool {
     BLOCKED_URL_PARTS.iter().any(|part| url.contains(*part))
 }
 
+/// Merek upstream di teks antarmuka. Terjemahan dicari lewat teks Inggris aslinya (`locale_catalog.rs`) dan 22 berkas
+/// terjemahan menyebut "Open CAD Studio" di dalam kalimatnya; mengubah teks sumber akan memutus pencarian itu. Karena itu
+/// penggantian dilakukan sekali di keluaran `i18n::translate*`, sebelum nilai argumen (nama berkas pengguna) disisipkan.
+pub fn brand_text(text: String) -> String {
+    const UPSTREAM: &str = "Open CAD Studio";
+    if HIDE_UPSTREAM_LINKS && text.contains(UPSTREAM) {
+        text.replace(UPSTREAM, "SipilCAD")
+    } else {
+        text
+    }
+}
+
 /// Build desktop: dokumen pendamping (LICENSE.txt, SOURCE.txt, OFL-PTSans.txt) dipasang di folder yang sama dengan exe.
 /// Tombol di dialog About mengirim path relatifnya lewat `open_url`; di web itu relatif terhadap halaman, tetapi di desktop
 /// relatif terhadap folder kerja, yang bisa folder gambar bila aplikasi dibuka dari asosiasi file. Fungsi ini mengubah hanya
@@ -167,5 +179,17 @@ mod tests {
         }
         // Berkas pendamping yang tidak ada di folder exe uji: tetap relatif, tidak jadi path ngawur.
         assert_eq!(resolve_local_document(LICENSE_PATH), LICENSE_PATH);
+    }
+
+    /// Merek diganti di semua kemunculan; teks lain dan nama produk lain tidak berubah.
+    #[test]
+    fn brand_text_replaces_only_the_upstream_product_name() {
+        assert_eq!(
+            brand_text("Open CAD Studio ist bereit. Open CAD Studio!".to_string()),
+            "SipilCAD ist bereit. SipilCAD!"
+        );
+        for same in ["", "SipilCAD", "OpenCADStudio", "open cad studio", "Open CAD", "AutoCAD"] {
+            assert_eq!(brand_text(same.to_string()), same);
+        }
     }
 }

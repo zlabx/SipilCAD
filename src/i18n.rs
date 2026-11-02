@@ -293,9 +293,11 @@ fn catalog_ids(source: &str) -> Option<(&'static str, &'static str)> {
 /// translatable data.
 pub fn translate(source: impl AsRef<str>) -> Cow<'static, str> {
     let source = source.as_ref();
-    catalog_ids(source)
-        .map(|(message_id, attribute_id)| Cow::Owned(loader().get_attr(message_id, attribute_id)))
-        .unwrap_or_else(|| Cow::Owned(source.to_string()))
+    // SIPIL: merek upstream di teks dan terjemahannya diganti di sini (lihat sipil::brand_text).
+    let text = catalog_ids(source)
+        .map(|(message_id, attribute_id)| loader().get_attr(message_id, attribute_id))
+        .unwrap_or_else(|| source.to_string());
+    Cow::Owned(crate::sipil::brand_text(text))
 }
 
 /// Translate a catalog message and replace the named values used by legacy
@@ -305,6 +307,8 @@ pub fn translate_args(source: impl AsRef<str>, args: &[(&str, String)]) -> Cow<'
     let mut translated = catalog_ids(source)
         .map(|(message_id, attribute_id)| loader().get_attr(message_id, attribute_id))
         .unwrap_or_else(|| source.to_string());
+    // SIPIL: sebelum nilai argumen (nama berkas pengguna) disisipkan.
+    translated = crate::sipil::brand_text(translated);
     for (name, value) in args {
         translated = translated.replace(&format!("__ocs_arg_{name}__"), value);
         translated = translated.replace(&format!("%{{{name}}}"), value);
@@ -324,7 +328,8 @@ pub fn translate_format(template: &str, rendered: String) -> Cow<'static, str> {
     let Some(values) = format_values(template, &rendered) else {
         return Cow::Owned(rendered);
     };
-    let mut translated = loader().get_attr(message_id, attribute_id);
+    // SIPIL: sebelum nilai (nama berkas pengguna) disisipkan.
+    let mut translated = crate::sipil::brand_text(loader().get_attr(message_id, attribute_id));
     for (index, value) in values.iter().enumerate() {
         translated = translated.replace(&format!("__ocs_fmt_{index}__"), value);
     }

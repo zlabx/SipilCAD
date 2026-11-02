@@ -38,15 +38,20 @@ Additional changes applied by the build after those substitutions:
 - modified: `src/app/startup.rs`
 - modified: `src/app/view/mod.rs`
 - modified: `src/cli.rs`
+- modified: `src/i18n.rs`
+- modified: `src/input/spacemouse/navlib.rs`
+- modified: `src/io/edit_lock.rs`
 - modified: `src/io/file_association.rs`
+- modified: `src/io/pdf_export.rs`
+- modified: `src/io/recovery.rs`
+- modified: `src/io/step.rs`
+- modified: `src/io/stl.rs`
+- modified: `src/io/svg_export.rs`
 - modified: `src/lib.rs`
 - modified: `src/plugin/marketplace.rs`
 - modified: `src/sys.rs`
 - modified: `src/ui/window/about.rs`
-- modified: `src/ui/window/missing_fonts.rs`
 - modified: `src/ui/window/options.rs`
-- modified: `src/ui/window/options/graphics.rs`
-- modified: `src/ui/window/options/spacemouse.rs`
 - modified: `src/ui/window/xref_help.rs`
 - modified: `web-app.html`
 - modified: `web/app.webmanifest`
@@ -62,6 +67,7 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `assets/logo-small.svg`
 - added or replaced: `assets/logo.svg`
 - added or replaced: `packaging/windows/main.wxs`
+- added or replaced: `packaging/windows/sipilcad.iss`
 - added or replaced: `packaging/windows/strings.en-US.wxl`
 - added or replaced: `packaging/windows/ui.wxs`
 - added or replaced: `scripts/sipil-licenses.sh`
