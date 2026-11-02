@@ -121,6 +121,10 @@ Root: HKA; Subkey: "Software\Classes\.dxf\OpenWithProgids"; ValueType: string; V
 Root: HKA; Subkey: "Software\Classes\.dwg"; ValueType: string; ValueData: "SipilCAD.DWG"; Tasks: assocdwg; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.dxf"; ValueType: string; ValueData: "SipilCAD.DXF"; Tasks: assocdxf; Flags: uninsdeletevalue
 
+; The parent key holds Capabilities (below) and whatever the app registers per user at run time; remove it on
+; uninstall only when nothing is left in it.
+Root: HKA; Subkey: "Software\SipilCAD"; Flags: uninsdeletekeyifempty
+
 ; Settings > Default apps.
 Root: HKA; Subkey: "Software\SipilCAD\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\SipilCAD\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "2D/3D CAD application for DWG and DXF drawings"
