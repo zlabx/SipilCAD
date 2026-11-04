@@ -70,9 +70,15 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `packaging/windows/sipilcad.iss`
 - added or replaced: `packaging/windows/strings.en-US.wxl`
 - added or replaced: `packaging/windows/ui.wxs`
+- added or replaced: `scripts/sipil-landing.py`
 - added or replaced: `scripts/sipil-licenses.sh`
 - added or replaced: `scripts/sipil-postbuild.py`
 - added or replaced: `scripts/sipil-tools.sh`
+- added or replaced: `sipil-landing/favicon.svg`
+- added or replaced: `sipil-landing/icon.svg`
+- added or replaced: `sipil-landing/index.html`
+- added or replaced: `sipil-landing/screenshot.webp`
+- added or replaced: `sipil-landing/sw.js`
 - added or replaced: `src/sipil.rs`
 - added or replaced: `tests/upstream_links.rs`
 - added or replaced: `web/discussions.json`

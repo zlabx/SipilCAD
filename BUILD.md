@@ -20,17 +20,21 @@ otomatis.
 bash scripts/sipil-tools.sh
 
 # 2. build web; --public-url ./ membuat semua URL relatif, sehingga hasilnya bisa dilayani dari folder mana pun
-trunk build --locked --release --public-url ./ --dist dist/sipilcad --html-output index.html web-app.html
+trunk build --locked --release --public-url ./ --dist dist/sipilcad/web --html-output index.html web-app.html
 
 # 3. pasca-build: bersihkan index.html, kosongkan data upstream, tulis LICENSE.txt dan SOURCE.txt, cap CACHE_VERSION di sw.js
-python3 scripts/sipil-postbuild.py dist/sipilcad --tag <tag build> --commit <sha commit> --upstream-sha <sha upstream> --upstream-ref <tag/ref upstream>
+python3 scripts/sipil-postbuild.py dist/sipilcad/web --tag <tag build> --commit <sha commit> --upstream-sha <sha upstream> --upstream-ref <tag/ref upstream>
 
 # 4. THIRD_PARTY_LICENSES.txt (cargo-about, diverifikasi SHA-256)
-bash scripts/sipil-licenses.sh dist/sipilcad
+bash scripts/sipil-licenses.sh dist/sipilcad/web
+
+# 5. halaman landing /sipilcad/ (sipil-landing/) dan penghapus service worker lama, dipasang di akar dist/sipilcad
+python3 scripts/sipil-landing.py dist/sipilcad
 ```
 
 `<sha upstream>` dan `<tag build>` tercantum di pesan commit dan di `MODIFICATIONS.md`. Folder `dist/sipilcad`
-adalah isi yang dilayani di `https://sipilstock.com/sipilcad/`.
+adalah isi yang dilayani di `https://sipilstock.com/sipilcad/`: halaman landing di akar, aplikasi web di `web/`
+(`https://sipilstock.com/sipilcad/web/`). Folder `desktop/` (installer dan `latest.json`) ditulis workflow desktop, bukan build ini.
 
 ## Build desktop (Windows)
 
