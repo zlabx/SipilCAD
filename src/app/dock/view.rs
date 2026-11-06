@@ -520,6 +520,9 @@ impl OpenCADStudio {
                 tab.layers.view_panel(self.layer_name_col_w, width, chrome)
             }
             crate::ui::dock::PanelId::QuickCalc => self.quick_calc_view(tab, width, chrome),
+            crate::ui::dock::PanelId::SipilWall => {
+                crate::sipil_wall::ui::panel_view(&self.sipil_wall, width, chrome)
+            }
         }
     }
 

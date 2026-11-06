@@ -6954,6 +6954,10 @@ properties={:.1}ms picked={}",
                         );
                         return Task::none();
                     }
+                    // SIPIL: a wall part opens its parameter popup.
+                    if self.sipil_wall_open_at(i, handle) {
+                        return Task::none();
+                    }
                     // Table double-click: shared TABLEDIT editor setup. A
                     // grid miss returns NoCell and falls through to the
                     // other text/entity editors below; an editable cell or

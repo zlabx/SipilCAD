@@ -32,11 +32,18 @@ GPL-3.0. Changes made by the rebrand overlay (GPL-3.0 section 5(a)):
 Additional changes applied by the build after those substitutions:
 
 - modified: `build.rs`
+- modified: `src/app/commands/mod.rs`
 - modified: `src/app/commands/view.rs`
 - modified: `src/app/config.rs`
+- modified: `src/app/dock/update.rs`
+- modified: `src/app/dock/view.rs`
 - modified: `src/app/mod.rs`
+- modified: `src/app/properties.rs`
 - modified: `src/app/startup.rs`
+- modified: `src/app/update/mod.rs`
+- modified: `src/app/update/viewport.rs`
 - modified: `src/app/view/mod.rs`
+- modified: `src/app/view/modal.rs`
 - modified: `src/cli.rs`
 - modified: `src/i18n.rs`
 - modified: `src/input/spacemouse/navlib.rs`
@@ -50,6 +57,7 @@ Additional changes applied by the build after those substitutions:
 - modified: `src/lib.rs`
 - modified: `src/plugin/marketplace.rs`
 - modified: `src/sys.rs`
+- modified: `src/ui/dock.rs`
 - modified: `src/ui/window/about.rs`
 - modified: `src/ui/window/options.rs`
 - modified: `src/ui/window/xref_help.rs`
@@ -64,6 +72,9 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `about.hbs`
 - added or replaced: `about.toml`
 - added or replaced: `assets/LOGO.md`
+- added or replaced: `assets/icons/sipil/panel.svg`
+- added or replaced: `assets/icons/sipil/wall.svg`
+- added or replaced: `assets/icons/sipil/wall_settings.svg`
 - added or replaced: `assets/logo-small.svg`
 - added or replaced: `assets/logo.svg`
 - added or replaced: `packaging/windows/main.wxs`
@@ -79,7 +90,15 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `sipil-landing/index.html`
 - added or replaced: `sipil-landing/screenshot.webp`
 - added or replaced: `sipil-landing/sw.js`
+- added or replaced: `src/app/sipil_wall.rs`
 - added or replaced: `src/sipil.rs`
+- added or replaced: `src/sipil_wall/command.rs`
+- added or replaced: `src/sipil_wall/engine.rs`
+- added or replaced: `src/sipil_wall/entities.rs`
+- added or replaced: `src/sipil_wall/mod.rs`
+- added or replaced: `src/sipil_wall/module.rs`
+- added or replaced: `src/sipil_wall/state.rs`
+- added or replaced: `src/sipil_wall/ui.rs`
 - added or replaced: `tests/upstream_links.rs`
 - added or replaced: `web/discussions.json`
 - added or replaced: `web/pt-sans/OFL-PTSans.txt`

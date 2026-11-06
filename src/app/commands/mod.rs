@@ -200,6 +200,9 @@ impl OpenCADStudio {
         if let Some(task) = self.dispatch_block_editor_vars(cmd, i) {
             return Some(task);
         }
+        if let Some(task) = self.dispatch_sipil_wall(cmd, i) {
+            return Some(task);
+        }
         if cmd.trim_start_matches(['_', '.']) == "BGRIPSET" {
             return Some(self.start_block_grip_set());
         }

@@ -2633,6 +2633,7 @@ impl OpenCADStudio {
             Message::PcManager(message) => self.update_pc_manager(message),
             Message::Count(message) => self.on_count(message),
             Message::QuickCalc(message) => self.on_quick_calc(message),
+            Message::SipilWall(message) => self.sipil_wall_update(message),
             Message::SheetSet(message) => self.on_sheet_set(message),
             Message::KeyTip(input) => self.on_keytip(input),
             Message::RibbonSelectTab(idx) => {

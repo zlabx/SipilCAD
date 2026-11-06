@@ -9,7 +9,7 @@
 ; <dir> holds SipilCAD.exe, dwg_thumbnailer_win.dll, AppIcon.ico, dwg.ico, dxf.ico and docs\*.
 ;
 ; The AppId is a FIXED GUID. The launcher finds the installed app through the uninstall key
-; {AppId}_is1 (crates/core/src/catalog.rs in zlabx/Launcher: inno_app_id). Changing it breaks
+; {AppId}_is1 (launcher/crates/core/src/catalog.rs in zlabx/Apps: inno_app_id). Changing it breaks
 ; detection and upgrades; keep both in sync (rebrand/opencadstudio/test checks the value).
 
 #define MyAppName "SipilCAD"

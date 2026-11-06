@@ -1827,6 +1827,8 @@ impl OpenCADStudio {
     }
 
     pub(super) fn refresh_properties(&mut self) {
+        // SIPIL: selecting a wall part opens its parameter popup.
+        self.sipil_wall_on_selection();
         // A 186 468-entity selection spends ~112 ms in here. Split it into the
         // three phases that can own that: resolving the selected handles,
         // building the panel, and syncing the ribbon.
