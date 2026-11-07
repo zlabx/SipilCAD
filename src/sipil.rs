@@ -23,7 +23,7 @@ pub const FONT_PATH: &str = "OFL-PTSans.txt";
 /// upstream (`version` di Cargo.toml, `OCS_APP_VERSION`), yang tetap mengikuti rilis Open CAD Studio dan dipakai bagian lain
 /// (agen pengguna jaringan, penanda dialog donasi, API otomasi). Format `<tahun>.<nomor>` tanpa awalan "v" dan tanpa angka nol
 /// di depan nomor; naikkan di sini bila SipilCAD merilis versi baru.
-pub const APP_VERSION: &str = "2027.0";
+pub const APP_VERSION: &str = "2027.1";
 
 /// Kalimat di bawah nama produk pada dialog About (pengganti "CAD application for Architecture & Engineering"). Satu kalimat;
 /// bila lebih lebar dari kartu atas, teks membungkus ke baris kedua.
