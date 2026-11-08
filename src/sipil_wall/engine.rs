@@ -1,6 +1,6 @@
 //! SipilCAD wall engine: brick wall + plaster + hatch + practical columns.
 //!
-//! A Rust port of the user's `dinding_bata.lsp` (BW / BWSET), with a few
+//! A Rust port of the user's `dinding_bata.lsp` (BW), with a few
 //! corrections noted below. This file is deliberately **pure**: no iced, no
 //! `codec`, no host types, so it compiles and is unit-tested on its own
 //! (`cargo test` in a scratch crate; see `rebrand/opencadstudio/test/`).
@@ -22,18 +22,73 @@ use std::f64::consts::PI;
 
 pub type P = [f64; 2];
 
-/// Layer name and ACI colour, in the LISP's order.
-pub const LAYERS: [(&str, i16); 5] = [
-    ("BW-BATA", 8),
-    ("BW-PLASTER", 5),
-    ("BW-ARSIR", 1),
-    ("BW-KOLOM", 5),
-    ("BW-ARSIR-KOLOM", 7),
+/// Default layer table, one row per [`Role`] in the same order: name, ACI
+/// colour and lineweight (1/100 mm, `-3` = the drawing's default weight).
+pub const DEFAULT_LAYERS: [(&str, i16, i16); 5] = [
+    ("WALL-BRICK", 8, -3),
+    ("WALL-PLASTER", 5, -3),
+    ("WALL-HATCH", 1, -3),
+    ("WALL-COLUMN", 5, -3),
+    ("WALL-COLUMN-HATCH", 7, -3),
 ];
+
+/// Layer names walls used before the layers became editable (tag version 1).
+const LEGACY_LAYER_NAMES: [&str; 5] = [
+    "BW-BATA",
+    "BW-PLASTER",
+    "BW-ARSIR",
+    "BW-KOLOM",
+    "BW-ARSIR-KOLOM",
+];
+
+/// Lineweights (1/100 mm) a layer can have, as the drawing's lineweight list
+/// offers them. `-3` is the default weight.
+pub const LINEWEIGHTS: [i16; 25] = [
+    -3, 0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158,
+    200, 211,
+];
+
+/// Label of a lineweight value: `Default`, or millimetres with two decimals.
+pub fn lineweight_label(w: i16) -> String {
+    if w < 0 {
+        "Default".to_string()
+    } else {
+        format!("{:.2} mm", f64::from(w) / 100.0)
+    }
+}
+
+/// One wall layer: what it is called, its colour (AutoCAD colour index,
+/// 1-255) and its lineweight.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerSpec {
+    pub name: String,
+    pub color: i16,
+    pub lineweight: i16,
+}
+
+/// The default layers, in [`Role`] order.
+pub fn default_layers() -> [LayerSpec; 5] {
+    DEFAULT_LAYERS.map(|(name, color, lineweight)| LayerSpec {
+        name: name.to_string(),
+        color,
+        lineweight,
+    })
+}
+
+/// The layers of walls drawn before layers were editable: the old names with
+/// the old colours.
+fn legacy_layers() -> [LayerSpec; 5] {
+    let mut layers = default_layers();
+    for (layer, name) in layers.iter_mut().zip(LEGACY_LAYER_NAMES) {
+        layer.name = name.to_string();
+    }
+    layers
+}
 
 /// Application name of the XDATA record (a registered APPID).
 pub const XDATA_APP: &str = "SIPILWALL";
-const XDATA_VERSION: i16 = 1;
+/// 2 added the layer table; version 1 tags are still read.
+const XDATA_VERSION: i16 = 2;
 
 /// AR-CONC calibration of the LISP (`*bw-ck*`): scale = CK * total / 25.4.
 const CONCRETE_K: f64 = 0.012;
@@ -73,10 +128,10 @@ impl Pattern {
     pub fn label(self) -> &'static str {
         match self {
             Pattern::Ansi31 => "Diagonal (ANSI31)",
-            Pattern::Ansi37 => "Silang (ANSI37)",
-            Pattern::Ansi32 => "Diagonal ganda (ANSI32)",
-            Pattern::Solid => "Isi penuh (SOLID)",
-            Pattern::None => "Tanpa arsir",
+            Pattern::Ansi37 => "Cross (ANSI37)",
+            Pattern::Ansi32 => "Double diagonal (ANSI32)",
+            Pattern::Solid => "Solid fill (SOLID)",
+            Pattern::None => "No hatch",
         }
     }
 
@@ -113,9 +168,9 @@ impl Pattern {
 /// How the extra columns of a straight wall are spread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Spacing {
-    /// Equal bays, none longer than the interval ("Rata").
+    /// Equal bays, none longer than the interval ("Even").
     Even,
-    /// Exactly the interval from the start, remainder at the end ("Tetap").
+    /// Exactly the interval from the start, remainder at the end ("Fixed").
     Fixed,
 }
 
@@ -137,6 +192,8 @@ pub struct WallParams {
     pub col_hatch: bool,
     /// Column hatch scale override (0 = automatic).
     pub col_scale: f64,
+    /// Layer of each kind of part, in [`Role`] order.
+    pub layers: [LayerSpec; 5],
 }
 
 impl Default for WallParams {
@@ -151,6 +208,7 @@ impl Default for WallParams {
             hatch_scale: 0.0,
             col_hatch: true,
             col_scale: 0.0,
+            layers: default_layers(),
         }
     }
 }
@@ -170,10 +228,28 @@ impl WallParams {
         }
     }
 
+    /// The layer a part of this wall is drawn on.
+    pub fn layer(&self, role: Role) -> &LayerSpec {
+        &self.layers[role.index()]
+    }
+
     /// Clamp to values the geometry can use; NaN and negatives become safe ones.
     pub fn sanitized(&self) -> WallParams {
         let fix = |v: f64, min: f64| if v.is_finite() { v.max(min) } else { min };
+        let mut layers = self.layers.clone();
+        for (layer, (name, _, _)) in layers.iter_mut().zip(DEFAULT_LAYERS) {
+            if layer.name.trim().is_empty() {
+                layer.name = name.to_string();
+            }
+            layer.color = layer.color.clamp(1, 255);
+            layer.lineweight = if layer.lineweight < 0 {
+                -3
+            } else {
+                layer.lineweight.min(211)
+            };
+        }
         WallParams {
+            layers,
             thickness_m: fix(self.thickness_m, 0.01),
             plaster_m: fix(self.plaster_m, 0.0),
             col_len_m: fix(self.col_len_m, 0.0),
@@ -185,7 +261,7 @@ impl WallParams {
     }
 }
 
-/// A ready-made wall type for the sidebar.
+/// A ready-made wall type for the popup.
 pub struct Preset {
     pub label: &'static str,
     pub thickness_m: f64,
@@ -194,22 +270,22 @@ pub struct Preset {
 
 pub const PRESETS: [Preset; 4] = [
     Preset {
-        label: "Bata 1/2 batu + plester",
+        label: "1/2 brick + plaster",
         thickness_m: 0.10,
         plaster_m: 0.015,
     },
     Preset {
-        label: "Bata 1 batu + plester",
+        label: "1 brick + plaster",
         thickness_m: 0.20,
         plaster_m: 0.015,
     },
     Preset {
-        label: "Bata 1/2 batu (tanpa plester)",
+        label: "1/2 brick (no plaster)",
         thickness_m: 0.10,
         plaster_m: 0.0,
     },
     Preset {
-        label: "Bata 1 batu (tanpa plester)",
+        label: "1 brick (no plaster)",
         thickness_m: 0.20,
         plaster_m: 0.0,
     },
@@ -270,14 +346,9 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn layer(self) -> &'static str {
-        match self {
-            Role::Brick => LAYERS[0].0,
-            Role::Plaster => LAYERS[1].0,
-            Role::Hatch => LAYERS[2].0,
-            Role::Column => LAYERS[3].0,
-            Role::ColumnHatch => LAYERS[4].0,
-        }
+    /// Position in the layer table ([`WallParams::layers`]).
+    pub fn index(self) -> usize {
+        self.code() as usize
     }
 
     fn code(self) -> i16 {
@@ -327,12 +398,6 @@ pub struct Prim {
     pub shape: Shape,
     /// Set for columns: the box to remember for T-junctions.
     pub column: Option<ColumnBox>,
-}
-
-impl Prim {
-    pub fn layer(&self) -> &'static str {
-        self.role.layer()
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -741,6 +806,15 @@ impl Tag {
                 XVal::Real(p.hatch_scale),
                 XVal::I16(i16::from(p.col_hatch)),
                 XVal::Real(p.col_scale),
+            ]);
+            for layer in &p.layers {
+                v.extend([
+                    XVal::Str(layer.name.clone()),
+                    XVal::I16(layer.color),
+                    XVal::I16(layer.lineweight),
+                ]);
+            }
+            v.extend([
                 XVal::I16(i16::from(def.closed)),
                 XVal::I32(def.pts.len() as i32),
             ]);
@@ -775,8 +849,15 @@ impl Tag {
                 _ => None,
             }
         }
+        fn str_of(it: &mut It) -> Option<String> {
+            match it.next()? {
+                XVal::Str(v) => Some(v.clone()),
+                _ => None,
+            }
+        }
         let mut it = vals.iter();
-        if i16_of(&mut it)? != XDATA_VERSION {
+        let version = i16_of(&mut it)?;
+        if !(1..=XDATA_VERSION).contains(&version) {
             return None;
         }
         let id = i32_of(&mut it)? as u32;
@@ -807,6 +888,17 @@ impl Tag {
             let hatch_scale = real_of(&mut it)?;
             let col_hatch = i16_of(&mut it)? == 1;
             let col_scale = real_of(&mut it)?;
+            // Version 1 had fixed layers; they keep their old names.
+            let mut layers = legacy_layers();
+            if version >= 2 {
+                for layer in layers.iter_mut() {
+                    *layer = LayerSpec {
+                        name: str_of(&mut it)?,
+                        color: i16_of(&mut it)?,
+                        lineweight: i16_of(&mut it)?,
+                    };
+                }
+            }
             let closed = i16_of(&mut it)? == 1;
             let count = usize::try_from(i32_of(&mut it)?).ok()?;
             let mut pts = Vec::with_capacity(count.min(100_000));
@@ -832,6 +924,7 @@ impl Tag {
                         hatch_scale,
                         col_hatch,
                         col_scale,
+                        layers,
                     },
                     upm,
                     pts,
@@ -1197,6 +1290,15 @@ mod tests {
                 hatch_scale: 1.5,
                 col_hatch: false,
                 col_scale: 0.07,
+                layers: {
+                    let mut l = default_layers();
+                    l[0] = LayerSpec {
+                        name: "A-WALL".to_string(),
+                        color: 30,
+                        lineweight: 35,
+                    };
+                    l
+                },
             },
             upm: 100.0,
             pts: vec![[0.0, 0.0], [300.0, 0.0], [300.0, 200.0]],
@@ -1253,6 +1355,58 @@ mod tests {
             origin: Some([1.0, 2.0]),
         }
         .encode()
+    }
+
+    #[test]
+    fn version_1_tags_keep_their_old_layers() {
+        // A wall drawn before layers were editable: drop the layer table and
+        // mark the tag as version 1.
+        let mut v = anchor_values();
+        v[0] = XVal::I16(1);
+        v.drain(14..29);
+        let tag = Tag::decode(&v).expect("version 1 tag is still read");
+        let layers = &tag.def.unwrap().params.layers;
+        let names: Vec<&str> = layers.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["BW-BATA", "BW-PLASTER", "BW-ARSIR", "BW-KOLOM", "BW-ARSIR-KOLOM"]
+        );
+        assert_eq!(layers[0].color, 8);
+    }
+
+    #[test]
+    fn layers_are_sanitized() {
+        let mut p = WallParams::default();
+        p.layers[1].name = "  ".to_string();
+        p.layers[2].color = 0;
+        p.layers[3].color = 999;
+        p.layers[4].lineweight = 500;
+        p.layers[0].lineweight = -1;
+        let s = p.sanitized();
+        assert_eq!(s.layers[1].name, DEFAULT_LAYERS[1].0);
+        assert_eq!((s.layers[2].color, s.layers[3].color), (1, 255));
+        assert_eq!((s.layers[0].lineweight, s.layers[4].lineweight), (-3, 211));
+    }
+
+    #[test]
+    fn every_role_has_its_own_layer_row() {
+        let roles = [
+            Role::Brick,
+            Role::Plaster,
+            Role::Hatch,
+            Role::Column,
+            Role::ColumnHatch,
+        ];
+        for (i, role) in roles.iter().enumerate() {
+            assert_eq!(role.index(), i);
+        }
+        assert_eq!(
+            WallParams::default().layer(Role::Column).name,
+            "WALL-COLUMN"
+        );
+        assert_eq!(lineweight_label(-3), "Default");
+        assert_eq!(lineweight_label(25), "0.25 mm");
+        assert!(LINEWEIGHTS.contains(&-3) && LINEWEIGHTS.contains(&211));
     }
 
     #[test]

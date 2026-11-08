@@ -122,13 +122,11 @@ pub enum PanelId {
     Layers,
     /// The calculator (QUICKCALC).
     QuickCalc,
-    /// SIPIL: building components (walls first).
-    SipilWall,
 }
 
 impl PanelId {
     /// Every panel, in the order the pallet menu lists them.
-    pub const ALL: [PanelId; 13] = [
+    pub const ALL: [PanelId; 12] = [
         PanelId::Properties,
         PanelId::GraphicAttributes,
         PanelId::BlockPalette,
@@ -141,7 +139,6 @@ impl PanelId {
         PanelId::SheetSetManager,
         PanelId::Layers,
         PanelId::QuickCalc,
-        PanelId::SipilWall,
     ];
 
     /// Localized-friendly display name used by the collapsed/edge chrome.
@@ -159,7 +156,6 @@ impl PanelId {
             PanelId::SheetSetManager => "Sheet Set Manager",
             PanelId::Layers => "Layer Manager",
             PanelId::QuickCalc => "QuickCalc",
-            PanelId::SipilWall => "Komponen Bangunan",
         }
     }
 
@@ -180,7 +176,6 @@ impl PanelId {
             PanelId::SheetSetManager => include_bytes!("../../assets/icons/sheetset.svg"),
             PanelId::Layers => include_bytes!("../../assets/icons/layers/panel.svg"),
             PanelId::QuickCalc => crate::ui::window::quick_calc::ICON,
-            PanelId::SipilWall => include_bytes!("../../assets/icons/sipil/panel.svg"),
         }
     }
 
@@ -199,7 +194,6 @@ impl PanelId {
             PanelId::SheetSetManager => 280.0,
             PanelId::Layers => 560.0,
             PanelId::QuickCalc => 320.0,
-            PanelId::SipilWall => 290.0,
         }
     }
 

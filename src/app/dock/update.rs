@@ -540,7 +540,6 @@ impl OpenCADStudio {
                         self.show_layers = true;
                     }
                     PanelId::QuickCalc => self.quick_calc.show = true,
-                    PanelId::SipilWall => self.sipil_wall.show = true,
                 }
             }
             self.dock_reveal(id);
@@ -576,7 +575,6 @@ impl OpenCADStudio {
                 self.ribbon.deactivate_tool_if("LAYERS");
             }
             PanelId::QuickCalc => self.quick_calc.show = false,
-            PanelId::SipilWall => self.sipil_wall.show = false,
             PanelId::GraphicAttributes => {
                 self.show_graphic_attributes = false;
                 self.ribbon.set_graphic_attributes(false);
@@ -660,7 +658,6 @@ impl OpenCADStudio {
             PanelId::SheetSetManager => self.sheet_set.show,
             PanelId::Layers => self.show_layers,
             PanelId::QuickCalc => self.quick_calc.show,
-            PanelId::SipilWall => self.sipil_wall.show,
             PanelId::GraphicAttributes => self.show_graphic_attributes,
         }
     }

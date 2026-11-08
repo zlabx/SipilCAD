@@ -1,4 +1,4 @@
-//! `BW`: draw a wall along clicked axis points, with a live preview.
+//! `WALL` (alias `BW`): draw a wall along clicked axis points, with a live preview.
 //!
 //! The preview is the real result (outline, plaster, hatch, columns) built by
 //! the same engine that commits it, so what the user sees under the cursor is
@@ -73,25 +73,25 @@ impl WallCommand {
 
 impl CadCommand for WallCommand {
     fn name(&self) -> &'static str {
-        "BW"
+        "WALL"
     }
 
     fn prompt(&self) -> String {
         if self.pts.is_empty() {
-            "BW  Titik awal as dinding:".to_string()
+            "WALL  Specify start point of wall axis:".to_string()
         } else {
-            "BW  Titik berikutnya [Tutup/Undo] <selesai>:".to_string()
+            "WALL  Specify next point [Close/Undo] <done>:".to_string()
         }
     }
 
     fn options(&self) -> Vec<CmdOption> {
         match self.pts.len() {
             0 => Vec::new(),
-            1 | 2 => vec![CmdOption::new("Undo", "U"), CmdOption::new("Selesai", "")],
+            1 | 2 => vec![CmdOption::new("Undo", "U"), CmdOption::new("Done", "")],
             _ => vec![
-                CmdOption::new("Tutup", "C"),
+                CmdOption::new("Close", "C"),
                 CmdOption::new("Undo", "U"),
-                CmdOption::new("Selesai", ""),
+                CmdOption::new("Done", ""),
             ],
         }
     }
@@ -120,12 +120,12 @@ impl CadCommand for WallCommand {
     fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
         match text.trim().to_ascii_uppercase().as_str() {
             "" => None,
-            "C" | "T" | "TUTUP" | "CLOSE" if self.pts.len() >= 3 => Some(self.finish(true)),
+            "C" | "CLOSE" if self.pts.len() >= 3 => Some(self.finish(true)),
             "U" | "UNDO" => {
                 self.pts.pop();
                 Some(CmdResult::NeedPoint)
             }
-            "S" | "SELESAI" | "DONE" => Some(self.finish(false)),
+            "D" | "DONE" => Some(self.finish(false)),
             _ => None,
         }
     }

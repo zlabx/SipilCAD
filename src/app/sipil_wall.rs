@@ -9,11 +9,11 @@ use iced::Task;
 
 use crate::app::{Message, ModalKind, OpenCADStudio};
 use crate::sipil_wall::command::{host_pattern, WallCommand};
-use crate::sipil_wall::engine::{self, ColumnBox, LAYERS};
+use crate::sipil_wall::engine::{self, ColumnBox, LayerSpec};
+use crate::sipil_wall::module::POPUP_TOGGLE;
 use crate::sipil_wall::entities::{moved_by, read_tag, to_entities};
 use crate::sipil_wall::state::{Fields, Popup, Target};
 use crate::sipil_wall::ui::{self, Msg};
-use crate::ui::dock::PanelId;
 
 /// What the drawing already holds of walls.
 struct Scan {
@@ -44,7 +44,8 @@ fn scan(doc: &CadDocument, skip: Option<u32>) -> Scan {
 }
 
 impl OpenCADStudio {
-    /// Command-line entry points: `BW`, `BWSET`, `BWPANEL`.
+    /// Command-line and ribbon entry points: `WALL` (popup, then draw),
+    /// `BW` (draw at once with the last settings) and the `WALLPOPUP` toggle.
     pub(super) fn dispatch_sipil_wall(&mut self, cmd: &str, i: usize) -> Option<Task<Message>> {
         match cmd
             .trim()
@@ -52,41 +53,51 @@ impl OpenCADStudio {
             .to_ascii_uppercase()
             .as_str()
         {
-            "BW" => Some(self.sipil_wall_start(i)),
-            "BWSET" => {
-                self.sipil_wall_open_defaults();
+            "WALL" => {
+                self.sipil_wall_open_new();
                 Some(Task::none())
             }
-            "BWPANEL" => {
-                let open = !self.dock_panel_visible(PanelId::SipilWall);
-                Some(self.dock_set_open(PanelId::SipilWall, open))
+            "BW" => Some(self.sipil_wall_start(i)),
+            POPUP_TOGGLE => {
+                self.sipil_wall.popup_on_click ^= true;
+                self.ribbon
+                    .set_sipil_wall_popup(self.sipil_wall.popup_on_click);
+                if !self.sipil_wall.popup_on_click {
+                    self.sipil_wall.opened_for = None;
+                }
+                Some(Task::none())
             }
             _ => None,
         }
     }
 
-    /// The five wall layers, created with the LISP's colours when missing.
-    fn ensure_sipil_layers(&mut self, i: usize) {
-        let mut created = false;
+    /// Make the wall layers exist with the colours and lineweights of `layers`.
+    /// A layer that is already in the drawing keeps its own look unless
+    /// `restyle` is set (the person just chose these values in the popup).
+    fn ensure_sipil_layers(&mut self, i: usize, layers: &[LayerSpec; 5], restyle: bool) {
+        let mut changed = false;
         let scene = &mut self.tabs[i].scene;
-        for (name, aci) in LAYERS {
-            if scene.document.layers.contains(name) {
+        for spec in layers {
+            let exists = scene.document.layers.contains(spec.name.as_str());
+            if exists && !restyle {
                 continue;
             }
-            scene.ensure_layer(name);
-            if let Some(layer) = scene.document.layers.get_mut(name) {
-                layer.color = codec::types::Color::from_index(aci);
+            scene.ensure_layer(spec.name.as_str());
+            if let Some(layer) = scene.document.layers.get_mut(spec.name.as_str()) {
+                layer.color = codec::types::Color::from_index(spec.color);
+                layer.line_weight = codec::types::LineWeight::from_value(spec.lineweight);
+                changed = true;
             }
-            created = true;
         }
-        if created {
+        if changed {
             self.refresh_layer_panel();
         }
     }
 
     fn sipil_wall_start(&mut self, i: usize) -> Task<Message> {
         use crate::command::CadCommand;
-        self.ensure_sipil_layers(i);
+        let layers = self.sipil_wall.settings.layers.clone();
+        self.ensure_sipil_layers(i, &layers, false);
         let found = scan(&self.tabs[i].scene.document, None);
         let upm = engine::units_per_metre(self.tabs[i].scene.document.header.insertion_units);
         let cmd = WallCommand::new(
@@ -100,9 +111,10 @@ impl OpenCADStudio {
         Task::none()
     }
 
-    fn sipil_wall_open_defaults(&mut self) {
+    /// The Wall button: the popup with the settings of the next wall.
+    fn sipil_wall_open_new(&mut self) {
         self.sipil_wall.popup = Some(Popup {
-            target: Target::Defaults,
+            target: Target::New,
             fields: Fields::from_params(&self.sipil_wall.settings),
             def: None,
             error: None,
@@ -171,22 +183,8 @@ impl OpenCADStudio {
         self.sipil_wall_open_at(i, *handle);
     }
 
-    fn sipil_wall_sync_panel(&mut self) {
-        if let Ok(p) = self.sipil_wall.panel.to_params() {
-            self.sipil_wall.settings = p;
-        }
-    }
-
     pub(super) fn sipil_wall_update(&mut self, msg: Msg) -> Task<Message> {
         match msg {
-            Msg::Preset(idx) => {
-                ui::apply_preset(&mut self.sipil_wall.panel, idx);
-                self.sipil_wall_sync_panel();
-            }
-            Msg::Panel(field) => {
-                ui::apply_field(&mut self.sipil_wall.panel, field);
-                self.sipil_wall_sync_panel();
-            }
             Msg::PopupField(field) => {
                 if let Some(p) = self.sipil_wall.popup.as_mut() {
                     ui::apply_field(&mut p.fields, field);
@@ -199,13 +197,13 @@ impl OpenCADStudio {
                     p.error = None;
                 }
             }
-            Msg::OnClick(on) => self.sipil_wall.popup_on_click = on,
             Msg::PopupApply => return self.sipil_wall_apply(),
         }
         Task::none()
     }
 
-    /// OK in the popup: store new defaults, or rebuild the wall in the drawing.
+    /// OK in the popup: store the settings and start drawing, or rebuild the
+    /// wall in the drawing.
     fn sipil_wall_apply(&mut self) -> Task<Message> {
         let Some(mut popup) = self.sipil_wall.popup.take() else {
             self.active_modal = None;
@@ -220,9 +218,16 @@ impl OpenCADStudio {
             }
         };
         match popup.target.clone() {
-            Target::Defaults => {
-                self.sipil_wall.set_settings(params);
+            Target::New => {
+                self.sipil_wall.settings = params.clone();
                 self.active_modal = None;
+                let i = self.active_tab;
+                if self.tabs.get(i).is_none() {
+                    return Task::none();
+                }
+                // The person just chose these layers: show them as chosen.
+                self.ensure_sipil_layers(i, &params.layers, true);
+                return self.sipil_wall_start(i);
             }
             Target::Wall(id) => {
                 let Some(mut def) = popup.def.clone() else {
@@ -248,8 +253,8 @@ impl OpenCADStudio {
                     .map(|e| e.common().handle)
                     .collect();
                 self.active_modal = None;
-                self.push_undo_snapshot(i, "BWEDIT");
-                self.ensure_sipil_layers(i);
+                self.push_undo_snapshot(i, "WALLEDIT");
+                self.ensure_sipil_layers(i, &def.params.layers, true);
                 let scene = &mut self.tabs[i].scene;
                 scene.erase_entities(&old);
                 for entity in to_entities(&out, id, &def, &host_pattern) {

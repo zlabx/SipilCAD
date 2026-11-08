@@ -25,7 +25,7 @@ impl OpenCADStudio {
             Some(K::LayerStateManager) => crate::tr!("modal", "layer-state-manager"),
             Some(K::LayerTranslator) => crate::t!("Layer Translator").into_owned(),
             Some(K::DrawingUnits) => crate::t!("Drawing Units").into_owned(),
-            Some(K::SipilWall) => "Dinding bata".to_string(),
+            Some(K::SipilWall) => "Wall".to_string(),
             Some(K::BlockDefinition) => crate::t!("Block Definition").into_owned(),
             Some(K::PdfAttach) => match self.pdf_attach.as_ref().map(|s| s.kind) {
                 Some(codec::entities::UnderlayType::Dwf) => {
@@ -383,7 +383,7 @@ impl OpenCADStudio {
             }
             super::super::ModalKind::SipilWall => {
                 let popup = self.sipil_wall.popup.as_ref()?;
-                sized_flow(ex, 520, 700, |flow| {
+                sized_flow(ex, 560, 820, |flow| {
                     crate::sipil_wall::ui::popup_view(popup, flow)
                 })
             }

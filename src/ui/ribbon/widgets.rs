@@ -44,6 +44,8 @@ pub(super) struct ToggleState {
     pub show_sheet_set: bool,
     pub show_file_tabs: bool,
     pub show_layout_tabs: bool,
+    /// SIPIL: the Architecture tab's "popup on click" toggle.
+    pub sipil_wall_popup: bool,
 }
 
 // ── Layout constants (single source of truth: ROW_H from ui::mod) ─────────
@@ -387,6 +389,7 @@ pub(super) fn is_active_tool(id: &str, active_tool: &Option<String>, state: &Tog
         "SHEETSET" => state.show_sheet_set,
         "FILETAB" => state.show_file_tabs,
         "LAYOUTTAB" => state.show_layout_tabs,
+        "WALLPOPUP" => state.sipil_wall_popup,
         id => active_tool.as_deref() == Some(id),
     }
 }

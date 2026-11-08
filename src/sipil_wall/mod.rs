@@ -1,4 +1,4 @@
-//! SipilCAD building components. First component: brick walls (`BW`).
+//! SipilCAD building components. First component: brick walls (`WALL`).
 //!
 //! Added by the SipilStock rebrand kit (`rebrand/opencadstudio/overlay`), not
 //! by upstream. Everything that needs the host's private state lives in
@@ -7,9 +7,9 @@
 //! - `engine`   pure geometry (port of `dinding_bata.lsp`), unit-tested alone
 //! - `entities` primitives <-> drawing entities and the XDATA tag
 //! - `state`    settings and form fields, unit-tested alone
-//! - `command`  the `BW` draw command with live preview
-//! - `ui`       parameter popup and the components pallet (sidebar)
-//! - `module`   the ribbon tab
+//! - `command`  the `WALL` draw command with live preview
+//! - `ui`       the parameter popup (the tool's one dialog)
+//! - `module`   the Architecture ribbon tab
 
 pub mod command;
 pub mod engine;
@@ -20,6 +20,6 @@ pub mod ui;
 
 inventory::submit! {
     crate::command::CommandRegistration {
-        names: &["BW", "BWSET", "BWPANEL"],
+        names: &["WALL", "BW", "WALLPOPUP"],
     }
 }

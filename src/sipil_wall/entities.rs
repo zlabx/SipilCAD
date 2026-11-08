@@ -92,11 +92,11 @@ fn shape_entity(shape: &Shape, pattern: PatternFn) -> EntityType {
     }
 }
 
-/// One primitive as an entity on its layer, tagged with the wall.
-pub fn to_entity(prim: &Prim, tag: &Tag, pattern: PatternFn) -> EntityType {
+/// One primitive as an entity on `layer`, tagged with the wall.
+pub fn to_entity(prim: &Prim, layer: &str, tag: &Tag, pattern: PatternFn) -> EntityType {
     let mut e = shape_entity(&prim.shape, pattern);
     let c = e.common_mut();
-    c.layer = prim.layer().to_owned();
+    c.layer = layer.to_owned();
     c.extended_data.upsert_record(record(tag));
     e
 }
@@ -115,7 +115,7 @@ pub fn to_entities(out: &Output, id: u32, def: &WallDef, pattern: PatternFn) -> 
                 def: (i == 0).then(|| def.clone()),
                 origin: (i == 0).then(|| outline_centre(prim)).flatten(),
             };
-            to_entity(prim, &tag, pattern)
+            to_entity(prim, &def.params.layer(prim.role).name, &tag, pattern)
         })
         .collect()
 }

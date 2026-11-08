@@ -35,8 +35,6 @@ Additional changes applied by the build after those substitutions:
 - modified: `src/app/commands/mod.rs`
 - modified: `src/app/commands/view.rs`
 - modified: `src/app/config.rs`
-- modified: `src/app/dock/update.rs`
-- modified: `src/app/dock/view.rs`
 - modified: `src/app/mod.rs`
 - modified: `src/app/properties.rs`
 - modified: `src/app/startup.rs`
@@ -55,9 +53,11 @@ Additional changes applied by the build after those substitutions:
 - modified: `src/io/stl.rs`
 - modified: `src/io/svg_export.rs`
 - modified: `src/lib.rs`
+- modified: `src/modules/registry.rs`
 - modified: `src/plugin/marketplace.rs`
 - modified: `src/sys.rs`
-- modified: `src/ui/dock.rs`
+- modified: `src/ui/ribbon/mod.rs`
+- modified: `src/ui/ribbon/widgets.rs`
 - modified: `src/ui/window/about.rs`
 - modified: `src/ui/window/options.rs`
 - modified: `src/ui/window/xref_help.rs`
@@ -72,7 +72,6 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `about.hbs`
 - added or replaced: `about.toml`
 - added or replaced: `assets/LOGO.md`
-- added or replaced: `assets/icons/sipil/panel.svg`
 - added or replaced: `assets/icons/sipil/wall.svg`
 - added or replaced: `assets/icons/sipil/wall_settings.svg`
 - added or replaced: `assets/logo-small.svg`

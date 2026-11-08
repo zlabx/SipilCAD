@@ -220,6 +220,8 @@ pub struct Ribbon {
     pub show_file_tabs: bool,
     /// Layout tabs (LAYOUTTAB) visibility — drives the Layout Tabs button highlight.
     pub show_layout_tabs: bool,
+    /// SIPIL: wall "popup on click" toggle — drives its ribbon button highlight.
+    pub sipil_wall_popup: bool,
     pub open_dropdown: Option<String>,
     /// Title of the collapsed panel whose flyout is currently open, if any.
     pub collapsed_open: Option<String>,
@@ -370,6 +372,7 @@ impl Ribbon {
             show_authoring_palettes: false,
             show_file_tabs: true,
             show_layout_tabs: true,
+            sipil_wall_popup: true,
             open_dropdown: None,
             collapsed_open: None,
             last_panel_tool: HashMap::default(),
@@ -605,6 +608,9 @@ impl Ribbon {
     pub fn set_layout_tabs(&mut self, on: bool) {
         self.show_layout_tabs = on;
     }
+    pub fn set_sipil_wall_popup(&mut self, on: bool) {
+        self.sipil_wall_popup = on;
+    }
     /// Snapshot of every ribbon toggle's live state, for the render path.
     /// The Block Palette highlight is threaded in from the app's authoritative
     /// `show_block_palette` rather than a ribbon copy, so it can't drift from
@@ -623,6 +629,7 @@ impl Ribbon {
             show_sheet_set: self.show_sheet_set,
             show_file_tabs: self.show_file_tabs,
             show_layout_tabs: self.show_layout_tabs,
+            sipil_wall_popup: self.sipil_wall_popup,
         }
     }
 

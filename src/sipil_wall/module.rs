@@ -1,8 +1,17 @@
-//! The "SipilCAD" ribbon tab: wall tools and the building-components pallet.
+//! The "Architecture" ribbon tab. First component: the brick wall.
+//!
+//! The leftmost group holds the "popup on click" toggle (highlighted while on,
+//! like View Cube or UCS Icon), then the Wall button. Wall opens the one
+//! parameter popup and draws; the toggle decides whether a click on a wall
+//! already in the drawing opens that popup.
 
 use crate::modules::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
 
-pub struct SipilModule;
+pub struct ArchitectureModule;
+
+/// Command of the "popup on click" toggle. The ribbon highlights the button
+/// from its own state (`sipil_wall_popup`), see patch 0018.
+pub const POPUP_TOGGLE: &str = "WALLPOPUP";
 
 fn tool(id: &'static str, label: &'static str, icon: &'static [u8]) -> ToolDef {
     ToolDef {
@@ -13,40 +22,36 @@ fn tool(id: &'static str, label: &'static str, icon: &'static [u8]) -> ToolDef {
     }
 }
 
-impl CadModule for SipilModule {
+impl CadModule for ArchitectureModule {
     fn id(&self) -> &'static str {
-        "sipil"
+        "architecture"
     }
 
     fn title(&self) -> &'static str {
-        "SipilCAD"
+        "Architecture"
     }
 
     fn ribbon_groups(&self) -> &[RibbonGroup] {
         static GROUPS: std::sync::OnceLock<Vec<RibbonGroup>> = std::sync::OnceLock::new();
         GROUPS.get_or_init(|| {
-            vec![RibbonGroup {
-                title: "Dinding",
-                tools: vec![
-                    RibbonItem::LargeTool(tool(
-                        "BW",
-                        "Dinding",
-                        include_bytes!("../../assets/icons/sipil/wall.svg"),
-                    )),
-                    tool(
-                        "BWSET",
-                        "Pengaturan",
+            vec![
+                RibbonGroup {
+                    title: "Options",
+                    tools: vec![RibbonItem::LargeTool(tool(
+                        POPUP_TOGGLE,
+                        "Click Popup",
                         include_bytes!("../../assets/icons/sipil/wall_settings.svg"),
-                    )
-                    .into(),
-                    tool(
-                        "BWPANEL",
-                        "Komponen",
-                        include_bytes!("../../assets/icons/sipil/panel.svg"),
-                    )
-                    .into(),
-                ],
-            }]
+                    ))],
+                },
+                RibbonGroup {
+                    title: "Components",
+                    tools: vec![RibbonItem::LargeTool(tool(
+                        "WALL",
+                        "Wall",
+                        include_bytes!("../../assets/icons/sipil/wall.svg"),
+                    ))],
+                },
+            ]
         })
     }
 }
