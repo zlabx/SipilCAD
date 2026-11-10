@@ -8,10 +8,11 @@ use codec::{CadDocument, Handle};
 use iced::Task;
 
 use crate::app::{Message, ModalKind, OpenCADStudio};
-use crate::sipil_wall::command::{host_pattern, WallCommand};
+use crate::sipil_arch::door::adapter as arch;
+use crate::sipil_wall::command::WallCommand;
 use crate::sipil_wall::engine::{self, ColumnBox, LayerSpec};
 use crate::sipil_wall::module::POPUP_TOGGLE;
-use crate::sipil_wall::entities::{moved_by, read_tag, to_entities};
+use crate::sipil_wall::entities::{moved_by, read_tag};
 use crate::sipil_wall::state::{Fields, Popup, Target};
 use crate::sipil_wall::ui::{self, Msg};
 
@@ -148,16 +149,23 @@ impl OpenCADStudio {
         true
     }
 
-    /// Double-click (or click) on `handle`: open its wall's popup if it is a wall part.
+    /// Double-click (or click) on `handle`: open the popup of the wall or
+    /// component it belongs to (wall parts here, doors and the like through
+    /// the component registry).
     pub(super) fn sipil_wall_open_at(&mut self, i: usize, handle: Handle) -> bool {
         let tag = self.tabs[i]
             .scene
             .document
             .get_entity(handle)
             .and_then(read_tag);
-        let Some(tag) = tag else { return false };
-        self.sipil_wall.opened_for = Some(handle);
-        self.sipil_wall_open_wall(i, tag.id)
+        let opened = match tag {
+            Some(tag) => self.sipil_wall_open_wall(i, tag.id),
+            None => self.sipil_arch_open_at(i, handle),
+        };
+        if opened {
+            self.sipil_wall.opened_for = Some(handle);
+        }
+        opened
     }
 
     /// Called whenever the selection changed: a single selected wall part
@@ -236,34 +244,20 @@ impl OpenCADStudio {
                 };
                 def.params = params;
                 let i = self.active_tab;
-                let others = scan(&self.tabs[i].scene.document, Some(id));
-                let out = match engine::build(&def, &others.columns) {
-                    Ok(out) => out,
+                // The wall is rebuilt together with its doors, so their
+                // openings stay and the detail sheets follow the thickness.
+                let model = arch::scan(self.tabs[i].scene.document.entities());
+                let edit = match model.rebuild_wall(id, def.clone()) {
+                    Ok(edit) => edit,
                     Err(e) => {
                         popup.error = Some(e);
                         self.sipil_wall.popup = Some(popup);
                         return Task::none();
                     }
                 };
-                let old: Vec<Handle> = self.tabs[i]
-                    .scene
-                    .document
-                    .entities()
-                    .filter(|e| read_tag(e).is_some_and(|t| t.id == id))
-                    .map(|e| e.common().handle)
-                    .collect();
                 self.active_modal = None;
-                self.push_undo_snapshot(i, "WALLEDIT");
                 self.ensure_sipil_layers(i, &def.params.layers, true);
-                let scene = &mut self.tabs[i].scene;
-                scene.erase_entities(&old);
-                for entity in to_entities(&out, id, &def, &host_pattern) {
-                    scene.add_entity(entity);
-                }
-                scene.deselect_all();
-                scene.bump_geometry();
-                self.tabs[i].dirty = true;
-                self.refresh_properties();
+                self.apply_sipil_edit(i, "WALLEDIT", &edit);
             }
         }
         Task::none()

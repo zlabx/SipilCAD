@@ -634,7 +634,7 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
     let mut items = Vec::new();
     match kind {
         ComponentKind::SheetSet => items.extend([
-            entry("Close Sheet Set", MenuAction::Close, true),
+            entry("Close Project", MenuAction::Close, true),
             menu_separator(),
         ]),
         ComponentKind::Sheet => {
@@ -642,12 +642,12 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
         }
         ComponentKind::Subset => {}
     }
-    items.push(entry("New Sheet...", MenuAction::NewSheet, true));
+    items.push(entry("New Drawing...", MenuAction::NewSheet, true));
     if kind != ComponentKind::Sheet {
-        items.push(entry("New Subset...", MenuAction::NewSubset, true));
+        items.push(entry("Add Category...", MenuAction::NewSubset, true));
     }
     items.push(entry(
-        "Import Layout as Sheet...",
+        "Add Drawing (DWG)...",
         MenuAction::ImportLayout,
         true,
     ));
@@ -655,13 +655,13 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
         ComponentKind::SheetSet => {}
         ComponentKind::Subset => items.extend([
             menu_separator(),
-            entry("Rename Subset...", MenuAction::Properties, true),
-            entry("Remove Subset", MenuAction::Remove, empty),
+            entry("Rename Category...", MenuAction::Properties, true),
+            entry("Remove Category", MenuAction::Remove, empty),
         ]),
         ComponentKind::Sheet => items.extend([
             menu_separator(),
             entry("Rename & Renumber...", MenuAction::Rename, true),
-            entry("Remove Sheet", MenuAction::Remove, true),
+            entry("Remove Drawing", MenuAction::Remove, true),
         ]),
     }
     items.push(menu_separator());
@@ -1306,7 +1306,7 @@ pub fn view<'a>(
         .style(muted_style);
     crate::ui::dock::frame(
         title_bar,
-        column![combo, tabs, card, hint].spacing(6),
+        column![combo, tabs, card, crate::sipil_project::ui::panel_buttons(), hint].spacing(6),
         width,
     )
 }

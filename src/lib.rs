@@ -36,6 +36,8 @@ pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rest;
 pub mod sipil_wall; // SIPIL: tembok bata, komponen bangunan (lihat src/sipil_wall/)
+pub mod sipil_arch; // SIPIL: komponen bangunan (pintu, dst.) dan registry-nya (lihat src/sipil_arch/)
+pub mod sipil_project; // SIPIL: project browser ala Revit (lihat src/sipil_project/)
 pub mod scene;
 pub(crate) mod schema_validation;
 pub mod sipil; // SIPIL: tambahan khusus SipilCAD (lihat src/sipil.rs)

@@ -3,6 +3,7 @@ use crate::scene::pipeline::{GpuAdapter, GpuStatus};
 
 impl OpenCADStudio {
     pub(super) fn queue_startup_prompts(&mut self) {
+        self.sipil_project_startup(); // SIPIL: Project 1 dan panel Sheet Set Manager terbuka
         #[cfg(not(target_arch = "wasm32"))]
         if !self.default_assoc_prompted {
             self.pending_startup_modals

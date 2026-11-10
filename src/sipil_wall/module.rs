@@ -1,11 +1,13 @@
-//! The "Architecture" ribbon tab. First component: the brick wall.
+//! The "Architecture" ribbon tab: the brick wall, then every component of the
+//! registry (`sipil_arch::registry`), one large button each.
 //!
 //! The leftmost group holds the "popup on click" toggle (highlighted while on,
-//! like View Cube or UCS Icon), then the Wall button. Wall opens the one
-//! parameter popup and draws; the toggle decides whether a click on a wall
-//! already in the drawing opens that popup.
+//! like View Cube or UCS Icon). Wall opens the one parameter popup and draws;
+//! the toggle decides whether a click on a wall (or a door) already in the
+//! drawing opens its popup.
 
 use crate::modules::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
+use crate::sipil_arch::registry;
 
 pub struct ArchitectureModule;
 
@@ -45,11 +47,17 @@ impl CadModule for ArchitectureModule {
                 },
                 RibbonGroup {
                     title: "Components",
-                    tools: vec![RibbonItem::LargeTool(tool(
+                    tools: std::iter::once(RibbonItem::LargeTool(tool(
                         "WALL",
                         "Wall",
                         include_bytes!("../../assets/icons/sipil/wall.svg"),
-                    ))],
+                    )))
+                    .chain(
+                        registry::COMPONENTS
+                            .iter()
+                            .map(|c| RibbonItem::LargeTool(tool(c.command, c.label, c.icon))),
+                    )
+                    .collect(),
                 },
             ]
         })

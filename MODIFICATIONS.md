@@ -33,6 +33,7 @@ Additional changes applied by the build after those substitutions:
 
 - modified: `build.rs`
 - modified: `src/app/commands/mod.rs`
+- modified: `src/app/commands/sheet_set.rs`
 - modified: `src/app/commands/view.rs`
 - modified: `src/app/config.rs`
 - modified: `src/app/mod.rs`
@@ -60,6 +61,7 @@ Additional changes applied by the build after those substitutions:
 - modified: `src/ui/ribbon/widgets.rs`
 - modified: `src/ui/window/about.rs`
 - modified: `src/ui/window/options.rs`
+- modified: `src/ui/window/sheet_set.rs`
 - modified: `src/ui/window/xref_help.rs`
 - modified: `web-app.html`
 - modified: `web/app.webmanifest`
@@ -72,6 +74,25 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `about.hbs`
 - added or replaced: `about.toml`
 - added or replaced: `assets/LOGO.md`
+- added or replaced: `assets/icons/sipil/beam.svg`
+- added or replaced: `assets/icons/sipil/column.svg`
+- added or replaced: `assets/icons/sipil/door.svg`
+- added or replaced: `assets/icons/sipil/door/p1.svg`
+- added or replaced: `assets/icons/sipil/door/p2.svg`
+- added or replaced: `assets/icons/sipil/door/p3.svg`
+- added or replaced: `assets/icons/sipil/door/plan_closed.svg`
+- added or replaced: `assets/icons/sipil/door/plan_open.svg`
+- added or replaced: `assets/icons/sipil/steel/cell-form.svg`
+- added or replaced: `assets/icons/sipil/steel/channel.svg`
+- added or replaced: `assets/icons/sipil/steel/equal-angle.svg`
+- added or replaced: `assets/icons/sipil/steel/h-beam.svg`
+- added or replaced: `assets/icons/sipil/steel/honeycomb.svg`
+- added or replaced: `assets/icons/sipil/steel/i-beam.svg`
+- added or replaced: `assets/icons/sipil/steel/king.svg`
+- added or replaced: `assets/icons/sipil/steel/queen.svg`
+- added or replaced: `assets/icons/sipil/steel/t-beam.svg`
+- added or replaced: `assets/icons/sipil/steel/unequal-angle.svg`
+- added or replaced: `assets/icons/sipil/steel/wide-flange.svg`
 - added or replaced: `assets/icons/sipil/wall.svg`
 - added or replaced: `assets/icons/sipil/wall_settings.svg`
 - added or replaced: `assets/logo-small.svg`
@@ -80,17 +101,60 @@ Additional changes applied by the build after those substitutions:
 - added or replaced: `packaging/windows/sipilcad.iss`
 - added or replaced: `packaging/windows/strings.en-US.wxl`
 - added or replaced: `packaging/windows/ui.wxs`
-- added or replaced: `scripts/sipil-landing.py`
 - added or replaced: `scripts/sipil-licenses.sh`
 - added or replaced: `scripts/sipil-postbuild.py`
 - added or replaced: `scripts/sipil-tools.sh`
-- added or replaced: `sipil-landing/favicon.svg`
-- added or replaced: `sipil-landing/icon.svg`
-- added or replaced: `sipil-landing/index.html`
-- added or replaced: `sipil-landing/screenshot.webp`
-- added or replaced: `sipil-landing/sw.js`
+- added or replaced: `src/app/commands/sheet_set/sipil_project.rs`
+- added or replaced: `src/app/sipil_arch/beam.rs`
+- added or replaced: `src/app/sipil_arch/column.rs`
+- added or replaced: `src/app/sipil_arch/door.rs`
+- added or replaced: `src/app/sipil_arch/mod.rs`
 - added or replaced: `src/app/sipil_wall.rs`
 - added or replaced: `src/sipil.rs`
+- added or replaced: `src/sipil_arch/beam/adapter.rs`
+- added or replaced: `src/sipil_arch/beam/command.rs`
+- added or replaced: `src/sipil_arch/beam/form.rs`
+- added or replaced: `src/sipil_arch/beam/info.rs`
+- added or replaced: `src/sipil_arch/beam/mod.rs`
+- added or replaced: `src/sipil_arch/beam/model.rs`
+- added or replaced: `src/sipil_arch/beam/plan.rs`
+- added or replaced: `src/sipil_arch/beam/planner.rs`
+- added or replaced: `src/sipil_arch/beam/ui.rs`
+- added or replaced: `src/sipil_arch/column/adapter.rs`
+- added or replaced: `src/sipil_arch/column/command.rs`
+- added or replaced: `src/sipil_arch/column/form.rs`
+- added or replaced: `src/sipil_arch/column/info.rs`
+- added or replaced: `src/sipil_arch/column/mod.rs`
+- added or replaced: `src/sipil_arch/column/model.rs`
+- added or replaced: `src/sipil_arch/column/plan.rs`
+- added or replaced: `src/sipil_arch/column/planner.rs`
+- added or replaced: `src/sipil_arch/column/ui.rs`
+- added or replaced: `src/sipil_arch/door/adapter.rs`
+- added or replaced: `src/sipil_arch/door/catalog.rs`
+- added or replaced: `src/sipil_arch/door/command.rs`
+- added or replaced: `src/sipil_arch/door/form.rs`
+- added or replaced: `src/sipil_arch/door/info.rs`
+- added or replaced: `src/sipil_arch/door/mod.rs`
+- added or replaced: `src/sipil_arch/door/model.rs`
+- added or replaced: `src/sipil_arch/door/plan.rs`
+- added or replaced: `src/sipil_arch/door/planner.rs`
+- added or replaced: `src/sipil_arch/door/sheet.rs`
+- added or replaced: `src/sipil_arch/door/ui.rs`
+- added or replaced: `src/sipil_arch/host.rs`
+- added or replaced: `src/sipil_arch/mod.rs`
+- added or replaced: `src/sipil_arch/registry.rs`
+- added or replaced: `src/sipil_arch/steel/catalog.rs`
+- added or replaced: `src/sipil_arch/steel/data.rs`
+- added or replaced: `src/sipil_arch/steel/draw.rs`
+- added or replaced: `src/sipil_arch/steel/mod.rs`
+- added or replaced: `src/sipil_arch/steel/pick.rs`
+- added or replaced: `src/sipil_arch/steel/shape.rs`
+- added or replaced: `src/sipil_arch/steel/ui.rs`
+- added or replaced: `src/sipil_project/db.rs`
+- added or replaced: `src/sipil_project/mod.rs`
+- added or replaced: `src/sipil_project/state.rs`
+- added or replaced: `src/sipil_project/templates.rs`
+- added or replaced: `src/sipil_project/ui.rs`
 - added or replaced: `src/sipil_wall/command.rs`
 - added or replaced: `src/sipil_wall/engine.rs`
 - added or replaced: `src/sipil_wall/entities.rs`

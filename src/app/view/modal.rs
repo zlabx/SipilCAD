@@ -26,6 +26,8 @@ impl OpenCADStudio {
             Some(K::LayerTranslator) => crate::t!("Layer Translator").into_owned(),
             Some(K::DrawingUnits) => crate::t!("Drawing Units").into_owned(),
             Some(K::SipilWall) => "Wall".to_string(),
+            Some(K::SipilProject) => "New Project".to_string(),
+            Some(K::SipilArch(id)) => self.sipil_arch_title(id),
             Some(K::BlockDefinition) => crate::t!("Block Definition").into_owned(),
             Some(K::PdfAttach) => match self.pdf_attach.as_ref().map(|s| s.kind) {
                 Some(codec::entities::UnderlayType::Dwf) => {
@@ -386,6 +388,15 @@ impl OpenCADStudio {
                 sized_flow(ex, 560, 820, |flow| {
                     crate::sipil_wall::ui::popup_view(popup, flow)
                 })
+            }
+            super::super::ModalKind::SipilProject => {
+                let form = self.sipil_project.form.as_ref()?;
+                sized_flow(ex, 520, 640, |flow| {
+                    crate::sipil_project::ui::new_project_view(form, flow)
+                })
+            }
+            super::super::ModalKind::SipilArch(id) => {
+                sized_flow(ex, 560, 820, |flow| self.sipil_arch_popup_view(id, flow))
             }
             super::super::ModalKind::DrawingUnits => {
                 let state = self.drawing_units.as_ref()?;

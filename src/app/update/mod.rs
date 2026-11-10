@@ -2634,6 +2634,8 @@ impl OpenCADStudio {
             Message::Count(message) => self.on_count(message),
             Message::QuickCalc(message) => self.on_quick_calc(message),
             Message::SipilWall(message) => self.sipil_wall_update(message),
+            Message::SipilProject(message) => self.sipil_project_update(message),
+            Message::SipilArch(message) => self.sipil_arch_update(message),
             Message::SheetSet(message) => self.on_sheet_set(message),
             Message::KeyTip(input) => self.on_keytip(input),
             Message::RibbonSelectTab(idx) => {

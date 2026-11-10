@@ -27,14 +27,11 @@ python3 scripts/sipil-postbuild.py dist/sipilcad/web --tag <tag build> --commit 
 
 # 4. THIRD_PARTY_LICENSES.txt (cargo-about, diverifikasi SHA-256)
 bash scripts/sipil-licenses.sh dist/sipilcad/web
-
-# 5. halaman landing /sipilcad/ (sipil-landing/) dan penghapus service worker lama, dipasang di akar dist/sipilcad
-python3 scripts/sipil-landing.py dist/sipilcad
 ```
 
 `<sha upstream>` dan `<tag build>` tercantum di pesan commit dan di `MODIFICATIONS.md`. Folder `dist/sipilcad`
-adalah isi yang dilayani di `https://sipilstock.com/sipilcad/`: halaman landing di akar, aplikasi web di `web/`
-(`https://sipilstock.com/sipilcad/web/`). Folder `desktop/` (installer dan `latest.json`) ditulis workflow desktop, bukan build ini.
+berisi aplikasi web di `web/` (`https://sipilstock.com/sipilcad/web/`). Halaman landing `/sipilcad/` (dan `sw.js`,
+penghapus service worker lama) tidak ada di build ini: dikelola di repo `zlabx/zlabx` dan diteruskan Worker ke Pages. Folder `desktop/` (installer dan `latest.json`) ditulis workflow desktop, bukan build ini.
 
 ## Build desktop (Windows)
 

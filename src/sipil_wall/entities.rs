@@ -19,7 +19,7 @@ use codec::EntityType;
 /// stores (final world geometry). `None` if the catalog lacks the name.
 pub type PatternFn<'a> = &'a dyn Fn(&str, f64) -> Option<HatchPattern>;
 
-fn to_xdata(v: &XVal) -> XDataValue {
+pub fn to_xdata(v: &XVal) -> XDataValue {
     match v {
         XVal::I16(i) => XDataValue::Integer16(*i),
         XVal::I32(i) => XDataValue::Integer32(*i),
@@ -29,7 +29,7 @@ fn to_xdata(v: &XVal) -> XDataValue {
     }
 }
 
-fn from_xdata(v: &XDataValue) -> Option<XVal> {
+pub fn from_xdata(v: &XDataValue) -> Option<XVal> {
     Some(match v {
         XDataValue::Integer16(i) => XVal::I16(*i),
         XDataValue::Integer32(i) => XVal::I32(*i),
@@ -53,7 +53,7 @@ fn v2(p: &P) -> Vector2 {
     Vector2::new(p[0], p[1])
 }
 
-fn shape_entity(shape: &Shape, pattern: PatternFn) -> EntityType {
+pub fn shape_entity(shape: &Shape, pattern: PatternFn) -> EntityType {
     match shape {
         Shape::Poly { pts, closed } => {
             let mut pl = LwPolyline::new();

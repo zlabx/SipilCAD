@@ -58,6 +58,7 @@ mod options_session;
 pub mod plugin_host;
 mod presspull_ops;
 mod properties;
+mod sipil_arch; // SIPIL: glue registry komponen (overlay src/app/sipil_arch/)
 mod sipil_wall; // SIPIL: glue alat dinding (overlay src/app/sipil_wall.rs)
 mod quick_calc;
 mod recent;
@@ -1103,6 +1104,10 @@ pub(super) struct OpenCADStudio {
     pub(crate) quick_calc: crate::ui::window::quick_calc::QuickCalcPalette,
     /// SIPIL: state alat dinding bata.
     pub(crate) sipil_wall: crate::sipil_wall::state::State,
+    /// SIPIL: state komponen bangunan (pintu, dst.), per id komponen.
+    pub(crate) sipil_arch: sipil_arch::Host,
+    /// SIPIL: form New Project.
+    pub(crate) sipil_project: crate::sipil_project::state::State,
     /// Sheet Set Manager palette, the open sheet sets and their dialogs.
     pub(crate) sheet_set: crate::ui::window::sheet_set::SheetSetManager,
     /// A sheet opened from the manager: its drawing (path key) and layout,
@@ -2631,6 +2636,8 @@ pub enum ModalKind {
     LayerTranslator,
     DrawingUnits,
     SipilWall,
+    SipilProject,
+    SipilArch(&'static str),
     BlockDefinition,
     PdfAttach,
     PointCloudAttach,
@@ -4963,6 +4970,8 @@ pub enum Message {
     /// The QuickCalc pallet.
     QuickCalc(crate::ui::window::quick_calc::QuickCalcMsg),
     SipilWall(crate::sipil_wall::ui::Msg),
+    SipilProject(crate::sipil_project::ui::Msg),
+    SipilArch(crate::sipil_arch::ArchMsg),
     SheetSet(crate::ui::window::sheet_set::SheetSetMsg),
     PdfImportPickResult(Result<(std::path::PathBuf, std::sync::Arc<Vec<u8>>), String>),
     /// Result of the PDFATTACH file picker.
@@ -5369,6 +5378,8 @@ impl OpenCADStudio {
             count_palette: Default::default(),
             quick_calc: Default::default(),
             sipil_wall: Default::default(),
+            sipil_project: Default::default(),
+            sipil_arch: Default::default(),
             sheet_set: Default::default(),
             sheet_set_pending_layout: None,
             sheet_set_import_parent: None,

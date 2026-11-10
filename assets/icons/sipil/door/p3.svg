@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 72" role="img" aria-label="P3 aluminium double door, glass">
+  <rect x="2" y="4" width="44" height="64" stroke="#B4B6B9" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+  <line x1="24" y1="4" x2="24" y2="68" stroke="#B4B6B9" stroke-width="1.6"/>
+  <rect x="7" y="10" width="13" height="44" stroke="#6DB7ED" stroke-width="1.6" fill="none"/>
+  <rect x="28" y="10" width="13" height="44" stroke="#6DB7ED" stroke-width="1.6" fill="none"/>
+  <line x1="7" y1="58" x2="20" y2="58" stroke="#B4B6B9" stroke-width="1.2"/>
+  <line x1="28" y1="58" x2="41" y2="58" stroke="#B4B6B9" stroke-width="1.2"/>
+</svg>

@@ -540,21 +540,14 @@ fn hatch_fill(role: Role, pattern: Pattern, scale: f64, boundary: Vec<P>) -> Opt
     }
 }
 
-/// Build the wall. `existing` are the columns already in the drawing (from
-/// their tags); a vertex or station that lands on one reuses it.
-pub fn build(def: &WallDef, existing: &[ColumnBox]) -> Result<Output, String> {
-    let upm = if def.upm.is_finite() && def.upm > 0.0 {
-        def.upm
-    } else {
-        1000.0
-    };
-    let params = def.params.sanitized();
-
-    // Axis: drop repeated points and a closing duplicate.
+/// The axis a wall is built on: repeated points and a closing duplicate are
+/// dropped. Run `i` goes from point `i` to point `i + 1` (the last run of a
+/// closed wall back to point 0); doors refer to runs by this index.
+pub fn axis(def: &WallDef) -> Result<(Vec<P>, bool), String> {
     let mut pts: Vec<P> = Vec::with_capacity(def.pts.len());
     for &p in &def.pts {
         if !(p[0].is_finite() && p[1].is_finite()) {
-            return Err("titik tidak valid".into());
+            return Err("invalid point".into());
         }
         if pts.last().map_or(true, |&q| dist(p, q) > 1e-6) {
             pts.push(p);
@@ -567,10 +560,78 @@ pub fn build(def: &WallDef, existing: &[ColumnBox]) -> Result<Output, String> {
     if closed && pts.len() < 3 {
         closed = false;
     }
-    let n = pts.len();
-    if n < 2 {
-        return Err("minimal 2 titik".into());
+    if pts.len() < 2 {
+        return Err("at least 2 points are needed".into());
     }
+    Ok((pts, closed))
+}
+
+/// Start, end and direction of every run of the axis.
+pub fn runs(pts: &[P], closed: bool) -> Vec<(P, P, f64)> {
+    let n = pts.len();
+    let nr = if closed { n } else { n.saturating_sub(1) };
+    (0..nr)
+        .map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            (a, b, angle(a, b))
+        })
+        .collect()
+}
+
+/// A gap in the masonry (a door) on run `seg` of the axis: from `from` to
+/// `to`, measured along the run from its start point, in drawing units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Opening {
+    pub seg: usize,
+    pub from: f64,
+    pub to: f64,
+}
+
+/// `start..end` minus the gaps: the stretches of masonry that remain.
+fn cut_gaps(start: f64, end: f64, gaps: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut gaps: Vec<(f64, f64)> = gaps.to_vec();
+    gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::new();
+    let mut at = start;
+    for (g0, g1) in gaps {
+        if g1 <= at {
+            continue;
+        }
+        if g0 >= end {
+            break;
+        }
+        if g0 - at > 1e-6 {
+            out.push((at, g0.min(end)));
+        }
+        at = at.max(g1);
+    }
+    if end - at > 1e-6 {
+        out.push((at, end));
+    }
+    out
+}
+
+/// Build the wall. `existing` are the columns already in the drawing (from
+/// their tags); a vertex or station that lands on one reuses it.
+pub fn build(def: &WallDef, existing: &[ColumnBox]) -> Result<Output, String> {
+    build_with(def, existing, &[])
+}
+
+/// [`build`] with openings (doors) left out of the masonry.
+pub fn build_with(
+    def: &WallDef,
+    existing: &[ColumnBox],
+    openings: &[Opening],
+) -> Result<Output, String> {
+    let upm = if def.upm.is_finite() && def.upm > 0.0 {
+        def.upm
+    } else {
+        1000.0
+    };
+    let params = def.params.sanitized();
+
+    let (pts, closed) = axis(def)?;
+    let n = pts.len();
     let nr = if closed { n } else { n - 1 };
 
     let dims = Dims {
@@ -664,24 +725,31 @@ pub fn build(def: &WallDef, existing: &[ColumnBox]) -> Result<Output, String> {
         }
         stl.push((len, ve));
 
+        let gaps: Vec<(f64, f64)> = openings
+            .iter()
+            .filter(|o| o.seg == i)
+            .map(|o| (o.from, o.to))
+            .collect();
         for w in stl.windows(2) {
             let start = w[0].0 + w[0].1;
             let end = w[1].0 - w[1].1;
             if end - start > 1e-6 {
-                piece(
-                    &mut out,
-                    polar(a, ang, start),
-                    polar(a, ang, end),
-                    ang,
-                    &dims,
-                    &params,
-                    hscale,
-                );
+                for (s0, s1) in cut_gaps(start, end, &gaps) {
+                    piece(
+                        &mut out,
+                        polar(a, ang, s0),
+                        polar(a, ang, s1),
+                        ang,
+                        &dims,
+                        &params,
+                        hscale,
+                    );
+                }
             }
         }
     }
     if out.prims.is_empty() {
-        return Err("tidak ada yang bisa digambar".into());
+        return Err("nothing to draw".into());
     }
     Ok(out)
 }
@@ -1427,6 +1495,57 @@ mod tests {
             panic!()
         };
         assert!(close(x_range(pts).0, 35.0) && close(x_range(pts).1, 165.0));
+    }
+
+    #[test]
+    fn openings_split_the_masonry_and_leave_the_columns() {
+        let pts = [[0.0, 0.0], [4000.0, 0.0]];
+        let d = def(&pts, false, WallParams::default());
+        let plain = build(&d, &[]).unwrap();
+        assert_eq!(plain.n_pieces, 1);
+        // A 900 mm opening in the middle of the only run: two pieces, same columns.
+        let gap = Opening {
+            seg: 0,
+            from: 1550.0,
+            to: 2450.0,
+        };
+        let cut = build_with(&d, &[], &[gap]).unwrap();
+        assert_eq!((cut.n_pieces, cut.n_columns), (2, plain.n_columns));
+        let bricks: Vec<(f64, f64)> = cut
+            .prims
+            .iter()
+            .filter(|p| p.role == Role::Brick)
+            .map(|p| match &p.shape {
+                Shape::Poly { pts, .. } => x_range(pts),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(bricks.len(), 2);
+        assert!(bricks[0].1 <= 1550.0 + 1e-6 && bricks[1].0 >= 2450.0 - 1e-6);
+        // An opening on another run changes nothing.
+        let other = Opening { seg: 3, ..gap };
+        assert_eq!(build_with(&d, &[], &[other]).unwrap().n_pieces, 1);
+    }
+
+    #[test]
+    fn gaps_are_cut_out_of_a_stretch() {
+        assert_eq!(cut_gaps(0.0, 10.0, &[]), vec![(0.0, 10.0)]);
+        assert_eq!(cut_gaps(0.0, 10.0, &[(2.0, 4.0)]), vec![(0.0, 2.0), (4.0, 10.0)]);
+        // Overlapping and out-of-order gaps, one reaching the end.
+        assert_eq!(
+            cut_gaps(0.0, 10.0, &[(8.0, 12.0), (2.0, 5.0), (4.0, 6.0)]),
+            vec![(0.0, 2.0), (6.0, 8.0)]
+        );
+        assert!(cut_gaps(0.0, 10.0, &[(-1.0, 11.0)]).is_empty());
+    }
+
+    #[test]
+    fn axis_matches_what_build_uses() {
+        let d = def(&[[0.0, 0.0], [0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 0.0]], true, WallParams::default());
+        let (pts, closed) = axis(&d).unwrap();
+        assert_eq!((pts.len(), closed), (3, true));
+        assert_eq!(runs(&pts, closed).len(), 3);
+        assert!(axis(&def(&[[1.0, 1.0]], false, WallParams::default())).is_err());
     }
 
     #[test]

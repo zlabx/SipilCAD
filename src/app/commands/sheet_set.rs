@@ -18,6 +18,8 @@ use glam::DVec3;
 use iced::Task;
 use std::path::{Path, PathBuf};
 
+mod sipil_project; // SIPIL: project browser (overlay src/app/commands/sheet_set/sipil_project.rs)
+
 /// The variables this family answers for.
 pub(super) const SHEET_SET_SYSVARS: &[&str] = &[
     "SSMAUTOOPEN",
@@ -1390,7 +1392,8 @@ impl OpenCADStudio {
             .db()
             .and_then(|db| db.layout_reference(id, "Layout"))
         else {
-            return Task::none();
+            // SIPIL: an empty drawing slot of a project: create its DWG (or open a blank one).
+            return self.sipil_open_empty_sheet(id);
         };
         let path = PathBuf::from(&reference.file_name);
         if let Some(k) = self.tab_showing(&path) {
