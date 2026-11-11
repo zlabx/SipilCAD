@@ -22,6 +22,8 @@ use crate::ui::modal::ModalSizing;
 mod beam;
 mod column;
 mod door;
+mod grid;
+mod titleblock;
 
 /// State of every component, by component id.
 #[derive(Default)]
@@ -64,7 +66,13 @@ pub trait HostComponent {
 
 /// Every component, in the same order as the registry. Add yours here.
 fn components() -> Vec<Box<dyn HostComponent>> {
-    vec![Box::new(door::Door), Box::new(column::Column), Box::new(beam::Beam)]
+    vec![
+        Box::new(door::Door),
+        Box::new(column::Column),
+        Box::new(beam::Beam),
+        Box::new(grid::Grid),
+        Box::new(titleblock::TitleBlock),
+    ]
 }
 
 impl OpenCADStudio {

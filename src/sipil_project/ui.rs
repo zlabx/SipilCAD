@@ -1,5 +1,6 @@
 //! The project browser's two buttons (New Project, Open Project) under the
-//! Sheet Set Manager tree, and the New Project popup (name, template, folder).
+//! Sheet Set Manager tree, and the New Project popup (name, template, grid,
+//! folder).
 //!
 //! Widgets follow `sipil_wall/ui.rs` and `ui/window/drawing_units.rs` (same helpers,
 //! same look). The UI text is English on purpose and does not go through `t!`.
@@ -7,8 +8,8 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Border, Element, Fill, Length, Theme};
 
-use super::state::ProjectForm;
-use super::templates::{template, Template, TemplateId, TEMPLATES};
+use super::state::{GridField, ProjectForm};
+use super::templates::{drawing_count, outline, template, TemplateId, TEMPLATES};
 use crate::app::Message;
 use crate::ui::modal::ModalSizing;
 use crate::ui::style::form::{dialog_button, dialog_button_styled_opt, form_radio};
@@ -23,6 +24,7 @@ pub enum Msg {
     Name(String),
     Folder(String),
     Template(TemplateId),
+    Grid(GridField, String),
     /// Browse for the folder, and the folder picked.
     Browse,
     Picked(Option<std::path::PathBuf>),
@@ -84,22 +86,56 @@ pub fn panel_buttons<'a>() -> Element<'a, Message> {
 
 // ── New Project popup ─────────────────────────────────────────────────────
 
-/// The tree the template will create, as plain lines.
-fn preview<'a>(t: &'static Template) -> Element<'a, Message> {
-    if t.categories.is_empty() {
-        return text("Nothing yet: add categories and drawings with right-click.".to_string())
-            .size(11)
-            .style(muted)
-            .into();
-    }
-    let mut lines = column![].spacing(2);
-    for c in t.categories {
+/// The tree the template and its grid will create, as plain lines.
+fn preview<'a>(form: &ProjectForm) -> Element<'a, Message> {
+    let note =
+        |s: &str| -> Element<'a, Message> { text(s.to_string()).size(11).style(muted).into() };
+    let def = match form.grid_def() {
+        Ok(Some(def)) => def,
+        Ok(None) => return note("Nothing yet: add categories and drawings with right-click."),
+        Err(e) => return text(e).size(11).style(danger).into(),
+    };
+    let grid = match def.resolve() {
+        Ok(g) => g,
+        Err(e) => return text(e).size(11).style(danger).into(),
+    };
+    let tree = outline(&grid);
+    let mut lines = column![text(format!("{} drawings", drawing_count(&tree)))
+        .size(10)
+        .style(muted)]
+    .spacing(2);
+    for c in tree {
         lines = lines.push(text(format!("{}  ({})", c.name, c.drawings.len())).size(11));
         for d in c.drawings {
-            lines = lines.push(text(format!("      {d}")).size(10).style(muted));
+            lines = lines.push(text(format!("      {}", d.title)).size(10).style(muted));
         }
     }
-    scrollable(lines).height(Length::Fixed(170.0)).into()
+    scrollable(lines).height(Length::Fixed(150.0)).into()
+}
+
+fn grid_row<'a>(
+    label: &str,
+    coords: &str,
+    names: &str,
+    coords_field: GridField,
+    names_field: GridField,
+) -> Element<'a, Message> {
+    row![
+        text(label.to_string()).size(11).style(muted).width(LABEL_W),
+        text_input("0.00 2*3000.00", coords)
+            .on_input(move |v| msg(Msg::Grid(coords_field, v)))
+            .size(12)
+            .padding([3, 6])
+            .width(Fill),
+        text_input("labels", names)
+            .on_input(move |v| msg(Msg::Grid(names_field, v)))
+            .size(12)
+            .padding([3, 6])
+            .width(Length::Fixed(110.0)),
+    ]
+    .spacing(8)
+    .align_y(iced::Center)
+    .into()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -156,15 +192,40 @@ pub fn new_project_view<'a>(form: &'a ProjectForm, sizing: ModalSizing) -> Eleme
             .spacing(6)
             .into(),
     );
-    let tree = group("Project browser", preview(current));
 
-    let mut body = column![
-        text("New Project".to_string()).size(14),
-        name,
-        templates,
-        tree
-    ]
-    .spacing(8);
+    let mut body = column![text("New Project".to_string()).size(14), name, templates].spacing(8);
+    if current.grid.is_some() {
+        let g = &form.grid;
+        body = body.push(group(
+            "Grid (the drawings follow it)",
+            column![
+                grid_row(
+                    "X lines (A B C)",
+                    &g.x_coords,
+                    &g.x_labels,
+                    GridField::XCoords,
+                    GridField::XLabels
+                ),
+                grid_row(
+                    "Y lines (1 2 3)",
+                    &g.y_coords,
+                    &g.y_labels,
+                    GridField::YCoords,
+                    GridField::YLabels
+                ),
+                grid_row(
+                    "Levels (mm)",
+                    &g.z_coords,
+                    &g.z_labels,
+                    GridField::ZCoords,
+                    GridField::ZLabels
+                ),
+            ]
+            .spacing(6)
+            .into(),
+        ));
+    }
+    body = body.push(group("Project browser", preview(form)));
     #[cfg(not(target_arch = "wasm32"))]
     {
         body = body.push(location(form));

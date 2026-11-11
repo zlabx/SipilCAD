@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use super::templates::{TemplateId, DEFAULT_TEMPLATE};
+use super::templates::{template, TemplateId, DEFAULT_TEMPLATE};
+use crate::sipil_arch::grid::form::Fields as GridFields;
+use crate::sipil_arch::grid::model::GridDef;
 
 /// Characters a file or folder name cannot hold on Windows (the strictest of
 /// the systems this runs on). A project name becomes a folder and a file name.
@@ -16,9 +18,32 @@ pub const MAX_NAME: usize = 80;
 pub struct ProjectForm {
     pub name: String,
     pub template: TemplateId,
+    /// The grid texts, as typed (unused by the blank template).
+    pub grid: GridFields,
     /// Folder the project folder goes in (desktop only).
     pub folder: String,
     pub error: Option<String>,
+}
+
+/// One of the grid texts of the New Project popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridField {
+    XCoords,
+    XLabels,
+    YCoords,
+    YLabels,
+    ZCoords,
+    ZLabels,
+}
+
+/// The grid fields a template starts with (the house grid for the blank one).
+pub fn template_fields(id: TemplateId) -> GridFields {
+    let def = template(id)
+        .grid
+        .as_ref()
+        .map(|g| g.def())
+        .unwrap_or_default();
+    GridFields::from_def(&def)
 }
 
 impl ProjectForm {
@@ -27,9 +52,41 @@ impl ProjectForm {
         Self {
             name: next_project_name(existing),
             template: DEFAULT_TEMPLATE,
+            grid: template_fields(DEFAULT_TEMPLATE),
             folder,
             error: None,
         }
+    }
+
+    /// Type into one of the grid texts.
+    pub fn set_grid_field(&mut self, which: GridField, value: String) {
+        let g = &mut self.grid;
+        match which {
+            GridField::XCoords => g.x_coords = value,
+            GridField::XLabels => g.x_labels = value,
+            GridField::YCoords => g.y_coords = value,
+            GridField::YLabels => g.y_labels = value,
+            GridField::ZCoords => g.z_coords = value,
+            GridField::ZLabels => g.z_labels = value,
+        }
+        self.error = None;
+    }
+
+    /// Pick a template: its grid replaces the typed one.
+    pub fn set_template(&mut self, id: TemplateId) {
+        self.template = id;
+        if template(id).grid.is_some() {
+            self.grid = template_fields(id);
+        }
+    }
+
+    /// The grid the project is built from: `None` for the blank template, an
+    /// error when the typed texts are not a grid.
+    pub fn grid_def(&self) -> Result<Option<GridDef>, String> {
+        if template(self.template).grid.is_none() {
+            return Ok(None);
+        }
+        self.grid.to_def().map(Some)
     }
 }
 

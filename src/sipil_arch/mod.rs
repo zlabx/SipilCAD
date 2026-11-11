@@ -8,8 +8,11 @@
 pub mod beam;
 pub mod column;
 pub mod door;
+pub mod fields;
+pub mod grid;
 pub mod host;
 pub mod registry;
 pub mod steel;
+pub mod titleblock;
 
 pub use host::ArchMsg;

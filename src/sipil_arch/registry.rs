@@ -32,7 +32,13 @@ pub struct ComponentInfo {
 }
 
 /// Every component, in ribbon order. Add yours here.
-pub const COMPONENTS: &[ComponentInfo] = &[super::door::INFO, super::column::INFO, super::beam::INFO];
+pub const COMPONENTS: &[ComponentInfo] = &[
+    super::door::INFO,
+    super::column::INFO,
+    super::beam::INFO,
+    super::grid::INFO,
+    super::titleblock::INFO,
+];
 
 /// Commands and XDATA names the wall tool already owns.
 const RESERVED_COMMANDS: &[&str] = &["WALL", "BW", "WALLPOPUP"];
