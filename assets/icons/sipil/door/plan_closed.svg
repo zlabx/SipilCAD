@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 40" role="img" aria-label="Door closed in plan">
-  <rect x="2" y="26" width="12" height="8" stroke="#B4B6B9" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
-  <rect x="34" y="26" width="12" height="8" stroke="#B4B6B9" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
-  <line x1="14" y1="30" x2="34" y2="30" stroke="#6DB7ED" stroke-width="1.8" stroke-linecap="round"/>
-</svg>

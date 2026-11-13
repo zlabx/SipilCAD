@@ -1,10 +1,10 @@
 use super::*;
-use codec::objects::{XRecordEntry, XRecordValue};
-use codec::{DwgReader, DwgWriter, DxfReader, DxfWriter};
+use document::objects::{XRecordEntry, XRecordValue};
+use document::{DwgReader, DwgWriter, DxfReader, DxfWriter};
 use instance::ParameterFrame;
 use std::io::Cursor;
 
-fn fixture(kind: usize) -> (CadDocument, Handle, Handle, Parameter) {
+fn fixture(kind: usize) -> (Document, Handle, Handle, Parameter) {
     let (mut doc, definition, _) = super::tests::fixture();
     let base = Vector3::new(2., 3., 7.);
     let end = Vector3::new(12., 13., 7.);
@@ -33,7 +33,7 @@ fn fixture(kind: usize) -> (CadDocument, Handle, Handle, Parameter) {
     }
     .unwrap();
     let insert = doc
-        .add_entity(EntityType::Insert(codec::entities::Insert::new(
+        .add_entity(EntityType::Insert(document::entities::Insert::new(
             "ACTIONS",
             Vector3::ZERO,
         )))
@@ -45,7 +45,7 @@ fn fixture(kind: usize) -> (CadDocument, Handle, Handle, Parameter) {
     (doc, definition, insert, p)
 }
 
-fn record(doc: &mut CadDocument) -> &mut codec::objects::XRecord {
+fn record(doc: &mut Document) -> &mut document::objects::XRecord {
     doc.objects
         .values_mut()
         .find_map(|object| match object {

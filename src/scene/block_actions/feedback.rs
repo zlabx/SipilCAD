@@ -1,6 +1,6 @@
 //! Read-only authoring dependencies and finite value-set display samples.
 use super::*;
-use codec::objects::BlockParameterValueSet;
+use document::objects::BlockParameterValueSet;
 
 const MAX_MARKERS: usize = 256;
 
@@ -58,7 +58,7 @@ fn samples(set: &BlockParameterValueSet, current: f64) -> Vec<f64> {
     values
 }
 
-pub(crate) fn value_markers(doc: &CadDocument, p: &Parameter, value: Value) -> Vec<DVec3> {
+pub(crate) fn value_markers(doc: &Document, p: &Parameter, value: Value) -> Vec<DVec3> {
     if let Value::Frame { base, end } = value {
         let mut evaluated = p.clone();
         evaluated.end += base - p.base;
@@ -126,7 +126,7 @@ pub(crate) fn value_markers(doc: &CadDocument, p: &Parameter, value: Value) -> V
     points.into_iter().map(|point| grip_position(p, Value::Point(point))).collect()
 }
 
-pub(crate) fn dependencies(doc: &CadDocument, definition: Handle, selected: Handle) -> Vec<Handle> {
+pub(crate) fn dependencies(doc: &Document, definition: Handle, selected: Handle) -> Vec<Handle> {
     let selected_parameter = all_parameters(doc, definition)
         .into_iter()
         .find(|p| p.handle == selected)

@@ -2,13 +2,13 @@
 use super::*;
 use crate::scene::block_authoring::{edit, metadata};
 use crate::scene::block_grips::runtime;
-use codec::{
+use document::{
     objects::{DynamicBlockData, ObjectType},
-    CadDocument,
+    Document,
 };
 
 fn description(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     parameter: Handle,
     component: Option<usize>,
@@ -65,6 +65,9 @@ impl OpenCADStudio {
     pub(in crate::app) fn dynamic_grip_tip(&self, handle: Handle, id: usize) -> Option<String> {
         if !self.block_editor_preferences.grip_tips {
             return None;
+        }
+        if crate::scene::assoc_array_grips::is_array_grip(id) {
+            return self.array_grip_tip(handle, id);
         }
         let tab = &self.tabs[self.active_tab];
         if let Some(index) = super::super::block_authoring_edit::editor_grip_index(id) {

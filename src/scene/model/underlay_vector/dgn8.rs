@@ -1208,14 +1208,18 @@ fn read_run(run: &[&[u8]], styles: &Styles, xf: &Xf) -> Raw {
             105 if u32_at(e, 108) == Some(1) => {
                 let n = u32_at(e, 104).unwrap_or(0) as usize;
                 let parts = &run[index + 1..(index + 1 + n).min(run.len())];
+                // A large matrix does not fit one element: its values run on
+                // through every data element up to the next header.
                 let data = |family: u32, data_kind: u8, size: usize| {
-                    let d = parts.windows(2).find(|w| {
-                        kind(w[0]) == 101
-                            && u32_at(w[0], 116) == Some(family)
-                            && kind(w[1]) == data_kind
-                    })?[1];
-                    let count = u32_at(d, 104)? as usize;
-                    Some(d.get(120..)?.chunks_exact(size).take(count).collect::<Vec<_>>())
+                    let header = parts
+                        .iter()
+                        .position(|&p| kind(p) == 101 && u32_at(p, 116) == Some(family))?;
+                    let mut values = Vec::new();
+                    for &d in parts[header + 1..].iter().take_while(|&&p| kind(p) == data_kind) {
+                        let count = u32_at(d, 104)? as usize;
+                        values.extend(d.get(120..)?.chunks_exact(size).take(count));
+                    }
+                    (!values.is_empty()).then_some(values)
                 };
                 let (Some(numbers), Some(coords)) = (data(1, 102, 4), data(2, 103, 8)) else {
                     continue;
@@ -1441,14 +1445,37 @@ fn inflate_budget(cfb: &Cfb) -> usize {
     cfb.b.len().saturating_mul(64).max(256 << 20)
 }
 
+/// The model directories of the file: those holding graphic streams.
+fn model_dirs<E>(streams: &[(String, E)]) -> Vec<String> {
+    let mut dirs: Vec<String> = streams
+        .iter()
+        .filter_map(|(p, _)| {
+            let (dir, n) = p.rsplit_once("/Dgn^G/$")?;
+            n.parse::<u32>().is_ok().then(|| dir.to_string())
+        })
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// The numbered streams `{dir}/{kind}/$1`, `$2`, … of a model, in number
+/// order: an element stream holds about a thousand elements, and a model
+/// edited and compressed may have only its later ones filled (#2421).
+fn numbered<'a, E>(streams: &'a [(String, E)], dir: &str, kind: &str) -> Vec<&'a E> {
+    let prefix = format!("{dir}/{kind}/$");
+    let mut found: Vec<(u32, &E)> = streams
+        .iter()
+        .filter_map(|(p, e)| Some((p.strip_prefix(&prefix)?.parse().ok()?, e)))
+        .collect();
+    found.sort_by_key(|(n, _)| *n);
+    found.into_iter().map(|(_, e)| e).collect()
+}
+
 /// Models of the file: (name, graphic stream, header stream).
 fn models(cfb: &Cfb) -> Vec<(String, Vec<u8>, Vec<u8>)> {
     let streams = cfb.streams();
-    let mut dirs: Vec<String> = streams
-        .iter()
-        .filter_map(|(p, _)| p.strip_suffix("/Dgn^G/$1").map(|d| d.to_string()))
-        .collect();
-    dirs.sort();
+    let dirs = model_dirs(&streams);
     // Each stream may inflate to `STREAM_LIMIT` (512 MB) and every model
     // dir inflates its own — entries can all point at the same payload, so
     // N dirs × 512 MB was reachable from one small stream. The budget
@@ -1469,7 +1496,13 @@ fn models(cfb: &Cfb) -> Vec<(String, Vec<u8>, Vec<u8>)> {
                 .map(|(_, e)| inflate(&cfb.stream(e)))
                 .unwrap_or_default()
         };
-        let graphics = get("Dgn^G/$1");
+        let mut graphics = Vec::new();
+        for entry in numbered(&streams, &dir, "Dgn^G") {
+            if total.saturating_add(graphics.len()) >= total_limit {
+                break;
+            }
+            graphics.extend(inflate(&cfb.stream(entry)));
+        }
         let header = get("Dgn~Mh");
         total = total
             .saturating_add(graphics.len())
@@ -1695,23 +1728,21 @@ pub fn design_model_names(bytes: &[u8]) -> Option<Vec<String>> {
 /// are taken by the models already read).
 fn control_stream(cfb: &Cfb, k: usize, used: usize) -> Vec<u8> {
     let streams = cfb.streams();
-    let mut dirs: Vec<&str> = streams
-        .iter()
-        .filter_map(|(p, _)| p.strip_suffix("/Dgn^G/$1"))
-        .collect();
-    dirs.sort();
+    let dirs = model_dirs(&streams);
     let Some(dir) = dirs.get(k) else {
         return Vec::new();
     };
-    let left = inflate_budget(cfb).saturating_sub(used) as u64;
-    if left == 0 {
-        return Vec::new();
+    let mut left = inflate_budget(cfb).saturating_sub(used) as u64;
+    let mut out = Vec::new();
+    for entry in numbered(&streams, dir, "Dgn^C") {
+        if left == 0 {
+            break;
+        }
+        let part = inflate_at_most(&cfb.stream(entry), left.min(STREAM_LIMIT));
+        left = left.saturating_sub(part.len() as u64);
+        out.extend(part);
     }
-    streams
-        .iter()
-        .find(|(p, _)| *p == format!("{dir}/Dgn^C/$1"))
-        .map(|(_, e)| inflate_at_most(&cfb.stream(e), left.min(STREAM_LIMIT)))
-        .unwrap_or_default()
+    out
 }
 
 /// Every string of an element stored after the "ff fe 01 00" marker, with

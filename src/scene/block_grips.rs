@@ -1,10 +1,10 @@
 //! Native grip metadata shared by the editor and insertion commands.
 pub(crate) mod config;
 pub(crate) mod runtime;
-use codec::{
+use document::{
     objects::{BlockGrip, DynamicBlockData, ObjectType},
     types::Vector3,
-    CadDocument, Handle,
+    Document, Handle,
 };
 
 pub(crate) struct GripInfo {
@@ -45,7 +45,7 @@ fn grip_mut(data: &mut DynamicBlockData) -> Option<&mut BlockGrip> {
     }
 }
 
-pub(crate) fn grips(doc: &CadDocument, definition: Handle) -> Result<Vec<GripInfo>, &'static str> {
+pub(crate) fn grips(doc: &Document, definition: Handle) -> Result<Vec<GripInfo>, &'static str> {
     let Some(graph) = super::block_authoring::graph(doc, definition)? else {
         return Ok(vec![]);
     };
@@ -107,7 +107,7 @@ pub(crate) fn grips(doc: &CadDocument, definition: Handle) -> Result<Vec<GripInf
 }
 
 pub(crate) fn set_cycle_order(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     definition: Handle,
     rows: &[(Handle, bool)],
 ) -> Result<bool, &'static str> {
@@ -152,7 +152,7 @@ pub(crate) fn set_cycle_order(
     Ok(true)
 }
 
-pub(crate) fn insertion_points(doc: &CadDocument, definition: Handle) -> Vec<Vector3> {
+pub(crate) fn insertion_points(doc: &Document, definition: Handle) -> Vec<Vector3> {
     grips(doc, definition)
         .unwrap_or_default()
         .into_iter()
@@ -166,7 +166,7 @@ pub(crate) fn insertion_points(doc: &CadDocument, definition: Handle) -> Vec<Vec
 mod tests {
     use super::*;
     use crate::scene::{block_distance_parameter as distance, Scene};
-    use codec::{DwgReader, DwgWriter, DxfReader, DxfWriter};
+    use document::{DwgReader, DwgWriter, DxfReader, DxfWriter};
     use std::io::Cursor;
 
     #[test]
@@ -180,7 +180,7 @@ mod tests {
         let label = Vector3::new(5.0, 2.0, 0.0);
         distance::create(doc, definition, distance::Kind::Linear, start, end, label).unwrap();
         let xdict = doc.extension_dictionary_handle(definition).unwrap();
-        let mut table = codec::objects::SortEntitiesTable::for_block(definition);
+        let mut table = document::objects::SortEntitiesTable::for_block(definition);
         table.handle = doc.allocate_handle();
         table.owner_handle = xdict;
         let sort = table.handle;

@@ -1,6 +1,6 @@
 use super::*;
 use crate::scene::block_actions::{self as actions, instance::ParameterFrame, Parameter, Value};
-use codec::types::Transform;
+use document::types::Transform;
 use glam::DVec3;
 
 pub const START: usize = crate::scene::pick::grip::CUSTOM_GRIP_ID_START;
@@ -31,7 +31,7 @@ pub struct Grip {
     pub direction: Option<DVec3>,
 }
 
-pub fn grips(doc: &CadDocument, definition: Handle, p: &Parameter, value: Value) -> Vec<Grip> {
+pub fn grips(doc: &Document, definition: Handle, p: &Parameter, value: Value) -> Vec<Grip> {
     let frame = match value {
         Value::Point(end) => ParameterFrame { base: p.base, end },
         Value::Frame { base, end } => ParameterFrame { base, end },
@@ -62,6 +62,18 @@ pub fn grips(doc: &CadDocument, definition: Handle, p: &Parameter, value: Value)
                 offset,
                 direction: if p.flip {
                     actions::grip_direction(p, value)
+                } else if p.linear {
+                    native.direction.map(actions::v).and_then(|direction| {
+                        let original = (p.end - p.base).try_normalize()?;
+                        let current = (frame.end - frame.base).try_normalize()?;
+                        let cosine = original.x * current.x + original.y * current.y;
+                        let sine = original.x * current.y - original.y * current.x;
+                        Some(DVec3::new(
+                            direction.x * cosine - direction.y * sine,
+                            direction.x * sine + direction.y * cosine,
+                            direction.z,
+                        ))
+                    })
                 } else {
                     native.direction.map(actions::v)
                 },
@@ -72,7 +84,7 @@ pub fn grips(doc: &CadDocument, definition: Handle, p: &Parameter, value: Value)
 
 /// Configured grip locations filtered by native action key-point association.
 pub fn action_grips(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     parameter: &Parameter,
     value: Value,
@@ -85,7 +97,7 @@ pub fn action_grips(
 }
 
 pub(crate) fn action_grip_available(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     parameter: Handle,
     id: usize,
@@ -118,15 +130,15 @@ pub struct Input {
 
 #[derive(Default)]
 pub struct Limits {
-    distance: Option<codec::objects::BlockParameterValueSet>,
-    angle: Option<codec::objects::BlockParameterValueSet>,
-    x: Option<codec::objects::BlockParameterValueSet>,
-    y: Option<codec::objects::BlockParameterValueSet>,
+    distance: Option<document::objects::BlockParameterValueSet>,
+    angle: Option<document::objects::BlockParameterValueSet>,
+    x: Option<document::objects::BlockParameterValueSet>,
+    y: Option<document::objects::BlockParameterValueSet>,
     table: Vec<f64>,
 }
 
 impl Limits {
-    pub fn read(doc: &CadDocument, definition: Handle, p: &Parameter) -> Self {
+    pub fn read(doc: &Document, definition: Handle, p: &Parameter) -> Self {
         let mut limits = Self::default();
         if let Some(ObjectType::DynamicBlock(object)) = doc.objects.get(&p.handle) {
             match &object.data {
@@ -164,7 +176,7 @@ impl Limits {
     }
 
     fn delta(&self, delta: DVec3) -> DVec3 {
-        let scalar = |value, set: &Option<codec::objects::BlockParameterValueSet>| {
+        let scalar = |value, set: &Option<document::objects::BlockParameterValueSet>| {
             set.as_ref()
                 .map_or(value, |set| actions::constrain_value_set(value, set))
         };
@@ -191,7 +203,7 @@ impl Limits {
 }
 
 pub fn markers(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     p: &Parameter,
     value: Value,
@@ -384,7 +396,7 @@ mod tests {
 
     #[test]
     fn block_runtime_xy_corner_constraints_keep_the_opposite_corner_fixed() {
-        let set = codec::objects::BlockParameterValueSet {
+        let set = document::objects::BlockParameterValueSet {
             flags: 8,
             values: vec![5., 10., 15.],
             ..Default::default()

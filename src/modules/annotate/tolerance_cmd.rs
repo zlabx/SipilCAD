@@ -2,9 +2,9 @@
 //
 // The structured editor prepares the frame; this command places it.
 
-use codec::entities::Tolerance;
-use codec::types::Vector3;
-use codec::EntityType;
+use document::entities::Tolerance;
+use document::types::Vector3;
+use document::EntityType;
 use glam::DVec3;
 
 use crate::command::{CadCommand, CmdResult, WorkingPlane};
@@ -49,7 +49,7 @@ impl CadCommand for ToleranceCommand {
     }
 
     fn prompt(&self) -> String {
-        t!("TOLERANCE  Specify insertion point:").into_owned()
+        t!("TOLERANCE  Enter tolerance location:").into_owned()
     }
 
     fn wants_text_input(&self) -> bool {
@@ -98,7 +98,6 @@ impl CadCommand for ToleranceCommand {
             pick_tris: Vec::new(),
             pick_tris_low: Vec::new(),
             dash_from_start: false,
-            dash_align_end: None,
             text_verts: Vec::new(),
             name: "tolerance_preview".into(),
             points: points

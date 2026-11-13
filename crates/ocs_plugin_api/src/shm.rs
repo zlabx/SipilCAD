@@ -3,7 +3,7 @@
 //! The host owns a memory-mapped file that contains a small, read-only,
 //! rkyv-serialized view of the active document. The plugin maps the same file
 //! read-only and reads entity/layer data directly from the mapping without
-//! copying the full `CadDocument` into its own address space.
+//! copying the full `Document` into its own address space.
 //!
 //! This module is generic over the payload type so that the V3 simplified view
 //! and the V4 bincode-per-entity view can share the same double-buffered
@@ -29,7 +29,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
-use codec::{CadDocument, EntityType, Handle};
+use document::{Document, EntityType, Handle};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use rkyv::{check_archived_root, to_bytes, Archive, Deserialize, Serialize};
 
@@ -42,7 +42,13 @@ const CONTROL_MAGIC: u32 = 0x4F_43_53_44; // "OCSD"
 /// `ControlPage` and aligned to a typical page boundary so the snapshot segments
 /// that follow are naturally aligned for rkyv.
 const CONTROL_SIZE: usize = 4096;
-const MAX_SNAPSHOT_SIZE: usize = 1024 * 1024 * 1024;
+/// The mapping is a sparse file sized to the drawing; this only guards
+/// against a corrupt size.
+const MAX_SNAPSHOT_SIZE: usize = if usize::BITS >= 64 {
+    64 * 1024 * 1024 * 1024
+} else {
+    1024 * 1024 * 1024
+};
 
 /// Information sent to the plugin so it can open the shared mapping.
 #[derive(Debug, Clone)]
@@ -160,9 +166,18 @@ impl<T: SnapshotData> DocumentSnapshotStore<T> {
         &self.path
     }
 
+    /// The largest snapshot one segment holds.
+    pub fn segment_size(&self) -> usize {
+        self.segment_size
+    }
+
     /// Serialize `data` into the inactive segment and atomically publish it.
     pub fn publish(&mut self, data: &T) -> io::Result<()> {
-        let bytes = data.to_rkyv_bytes()?;
+        self.publish_bytes(&data.to_rkyv_bytes()?)
+    }
+
+    /// Publish bytes already serialized with [`SnapshotData::to_rkyv_bytes`].
+    pub fn publish_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
         if bytes.len() > self.segment_size {
             return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
@@ -181,7 +196,7 @@ impl<T: SnapshotData> DocumentSnapshotStore<T> {
         };
         let offset = CONTROL_SIZE + inactive * self.segment_size;
 
-        self.mmap[offset..offset + bytes.len()].copy_from_slice(&bytes);
+        self.mmap[offset..offset + bytes.len()].copy_from_slice(bytes);
         let control = ControlPage::from_bytes_mut(&mut self.mmap);
         // Ensure the plugin sees the new length before it sees the new version.
         control
@@ -413,8 +428,8 @@ pub struct DocumentViewData {
     pub entities: Vec<EntityView>,
 }
 
-impl From<&CadDocument> for DocumentViewData {
-    fn from(doc: &CadDocument) -> Self {
+impl From<&Document> for DocumentViewData {
+    fn from(doc: &Document) -> Self {
         Self {
             layers: doc.layers.iter().map(LayerView::from).collect(),
             app_ids: doc.app_ids.iter().map(AppIdView::from).collect(),
@@ -444,8 +459,8 @@ pub struct LayerView {
     pub name: String,
 }
 
-impl From<&codec::tables::Layer> for LayerView {
-    fn from(layer: &codec::tables::Layer) -> Self {
+impl From<&document::tables::Layer> for LayerView {
+    fn from(layer: &document::tables::Layer) -> Self {
         Self {
             handle: layer.handle.value(),
             name: layer.name.clone(),
@@ -460,8 +475,8 @@ pub struct AppIdView {
     pub name: String,
 }
 
-impl From<&codec::tables::AppId> for AppIdView {
-    fn from(app_id: &codec::tables::AppId) -> Self {
+impl From<&document::tables::AppId> for AppIdView {
+    fn from(app_id: &document::tables::AppId) -> Self {
         Self {
             handle: app_id.handle.value(),
             name: app_id.name.clone(),
@@ -539,8 +554,8 @@ impl ReaderEntityKind {
 // ── V4 full-entity document view ────────────────────────────────────────────
 
 /// Serializable V4 document view. The outer structure is rkyv; each entity's
-/// `data` is a bincode-encoded `codec::EntityType` so that the plugin can
-/// reconstruct the full typed entity without relying on opencadcodec's own rkyv
+/// `data` is a bincode-encoded `document::EntityType` so that the plugin can
+/// reconstruct the full typed entity without relying on document's own rkyv
 /// support.
 #[derive(Archive, Serialize, Deserialize, Debug, Clone)]
 #[archive(check_bytes)]
@@ -550,10 +565,10 @@ pub struct DocumentViewDataV4 {
     pub entities: Vec<EntityViewV4>,
 }
 
-impl From<&CadDocument> for DocumentViewDataV4 {
-    fn from(doc: &CadDocument) -> Self {
+impl From<&Document> for DocumentViewDataV4 {
+    fn from(doc: &Document) -> Self {
         let mut entities: Vec<_> = doc.entities().map(EntityViewV4::from).collect();
-        // ATTRIB records live inside their owning INSERT in CadDocument rather
+        // ATTRIB records live inside their owning INSERT in Document rather
         // than in the flat entity index. Flatten them into the plugin snapshot
         // as addressable entities while keeping the INSERT's canonical nested
         // copy intact for rendering and file serialization.
@@ -605,9 +620,9 @@ impl From<&EntityType> for EntityViewV4 {
 mod tests {
     use super::*;
     use crate::host::{DocumentReader, ReaderEntityKind};
-    use codec::entities::Point;
-    use codec::tables::Layer;
-    use codec::{CadDocument, EntityType};
+    use document::entities::Point;
+    use document::tables::Layer;
+    use document::{Document, EntityType};
 
     fn unique_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -621,8 +636,8 @@ mod tests {
         ))
     }
 
-    fn sample_doc() -> CadDocument {
-        let mut doc = CadDocument::new();
+    fn sample_doc() -> Document {
+        let mut doc = Document::new();
         doc.layers.add(Layer::new("SURVEY")).unwrap();
         let mut point = Point::from_coords(10.0, 20.0, 5.0);
         point.common.layer = "SURVEY".to_string();
@@ -630,7 +645,10 @@ mod tests {
         doc
     }
 
+    // NTFS allocates a file grown with set_len (it is sparse on Linux and
+    // macOS), and 64 GiB fills the CI runner's disk.
     #[test]
+    #[cfg_attr(windows, ignore = "allocates the whole oversized file on NTFS")]
     fn reader_rejects_oversized_snapshot() {
         let path = unique_path("oversized.bin");
         let file = OpenOptions::new()

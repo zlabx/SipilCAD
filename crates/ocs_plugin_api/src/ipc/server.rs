@@ -3,17 +3,17 @@
 use crate::host::HostApi;
 use crate::ipc::protocol::{PluginRequest, PluginResponse};
 
-fn addressable_document_snapshot(host: &dyn HostApi) -> codec::CadDocument {
+fn addressable_document_snapshot(host: &dyn HostApi) -> document::Document {
     let mut snapshot = host.document().clone();
     let attributes = host
         .document()
         .entities()
         .filter_map(|entity| match entity {
-            codec::EntityType::Insert(insert) => Some(insert.attributes.clone()),
+            document::EntityType::Insert(insert) => Some(insert.attributes.clone()),
             _ => None,
         })
         .flatten()
-        .map(codec::EntityType::AttributeEntity)
+        .map(document::EntityType::AttributeEntity)
         .collect::<Vec<_>>();
     for attribute in attributes {
         // Attribute entities remain canonical children of INSERT in the host
@@ -81,6 +81,15 @@ pub fn handle_plugin_request(
             host.push_undo(&label);
             PluginResponse::Ok
         }
+        BeginUndoGroup { label } => {
+            host.begin_undo_group(&label);
+            PluginResponse::Ok
+        }
+        EndUndoGroup => {
+            host.end_undo_group();
+            PluginResponse::Ok
+        }
+        QueryEntities { query } => PluginResponse::EntityPage(host.query_entities(&query)),
         SetDirty => {
             host.set_dirty();
             PluginResponse::Ok
@@ -221,6 +230,87 @@ pub fn handle_plugin_request(
         ListXRecordsWithEntries { dictionary_path } => {
             let path: Vec<&str> = dictionary_path.iter().map(|s| s.as_str()).collect();
             PluginResponse::ListXRecordsWithEntriesResult(host.list_xrecords_with_entries(&path))
+        }
+        StageParametricChain {
+            reference_name,
+            chain,
+            tolerance,
+        } => PluginResponse::StageParametricChainResult(host.stage_parametric_chain(
+            &reference_name,
+            &chain,
+            tolerance,
+        )),
+        SampleParametric { chain, s } => {
+            PluginResponse::SampleParametricResult(host.sample_parametric(&chain, s))
+        }
+        ValidateParametricChain { chain, tolerance } => {
+            PluginResponse::ValidateParametricChainResult(
+                host.validate_parametric_chain(&chain, tolerance),
+            )
+        }
+        RegisterPluginClass { class } => {
+            PluginResponse::RegisterPluginClassResult(host.register_plugin_class(
+                &plugin_id,
+                &class,
+            ))
+        }
+        StagePluginClassInstance { instance } => {
+            PluginResponse::StagePluginClassInstanceResult(host.stage_plugin_class_instance(
+                &plugin_id,
+                &instance,
+            ))
+        }
+        PluginClassInstanceProperties { handle } => {
+            PluginResponse::PluginClassInstancePropertiesResult(
+                host.plugin_class_instance_properties(handle),
+            )
+        }
+        ShowDialog(dialog) => PluginResponse::DialogResult(host.show_dialog(dialog)),
+        RegisterPanel(panel) => PluginResponse::PanelRegistered(host.register_panel(panel)),
+        UpdatePanel { panel_id, values } => {
+            PluginResponse::PanelUpdated(host.update_panel(&panel_id, values))
+        }
+        TogglePanel { panel_id, show } => {
+            PluginResponse::PanelToggled(host.toggle_panel(&panel_id, show))
+        }
+        RegisterQuadPanels { panels } => {
+            // API v15: the owning plugin's id is transport identity (see
+            // handle_plugin_request's doc), so one plugin's registration can
+            // never rewrite another plugin's panel. The outcome shape is one
+            // entry per panel; refused entries get a short reason string (a
+            // capable host reports its own specific reason on the command
+            // line; the wire reason stays honest and short).
+            let ok = host.register_quad_panels(plugin_id, &panels);
+            let errors: Vec<String> = ok
+                .iter()
+                .map(|accepted| {
+                    if *accepted {
+                        String::new()
+                    } else {
+                        "quad panel refused".to_owned()
+                    }
+                })
+                .collect();
+            PluginResponse::QuadPanelsRegistered { ok, errors }
+        }
+        UnregisterQuadPanels { panel_ids } => {
+            // API v15: the ownership law runs both ways — the transport's
+            // plugin id scopes the removal exactly like RegisterQuadPanels
+            // scopes the registration, so one plugin can never remove
+            // another plugin's panel.
+            let refs: Vec<&str> = panel_ids.iter().map(String::as_str).collect();
+            let ok = host.unregister_quad_panels(plugin_id, &refs);
+            let errors: Vec<String> = ok
+                .iter()
+                .map(|accepted| {
+                    if *accepted {
+                        String::new()
+                    } else {
+                        "quad panel not owned".to_owned()
+                    }
+                })
+                .collect();
+            PluginResponse::QuadPanelsRegistered { ok, errors }
         }
     }
 }

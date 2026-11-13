@@ -1,14 +1,14 @@
 //! Native Lookup parameter and property-table authoring.
 use super::block_authoring::graph;
 use super::block_authoring::{self as authoring, *};
-use codec::objects::{
+use document::objects::{
     BlockAction, BlockElement, BlockEvalValue, BlockGrip, BlockGripExpression, BlockLookupAction,
     BlockLookupColumn, BlockLookupParameter, BlockOnePointParameter, BlockParameter,
     DynamicBlockData, ObjectType,
 };
-use codec::{
+use document::{
     types::{Transform, Vector3},
-    CadDocument, Handle,
+    Document, Handle,
 };
 mod reference;
 mod expressions;
@@ -17,7 +17,7 @@ pub(crate) use expressions::validate_with_properties;
 mod tests;
 pub(crate) use reference::{evaluate_property, reference_properties};
 
-fn graph_handle(document: &CadDocument, definition: Handle) -> Option<Handle> {
+fn graph_handle(document: &Document, definition: Handle) -> Option<Handle> {
     let ObjectType::Dictionary(d) =
         document
             .objects
@@ -30,7 +30,7 @@ fn graph_handle(document: &CadDocument, definition: Handle) -> Option<Handle> {
     d.get("ACAD_ENHANCEDBLOCK")
 }
 pub(crate) fn parameters(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
 ) -> Vec<(Handle, &BlockLookupParameter)> {
     let Some(graph) = graph_handle(document, definition) else {
@@ -53,11 +53,21 @@ pub(crate) fn parameters(
         })
         .collect()
 }
-pub(crate) fn placement_error(document: &CadDocument, definition: Handle) -> Option<&'static str> {
+pub(crate) fn placement_error(document: &Document, definition: Handle) -> Option<&'static str> {
     authoring::graph(document, definition).err()
 }
+pub(crate) fn next_name(document: &Document, definition: Handle) -> String {
+    let names = parameters(document, definition)
+        .iter()
+        .map(|(_, p)| p.lookup_name.clone())
+        .collect::<Vec<_>>();
+    (1..)
+        .map(|n| format!("Lookup{n}"))
+        .find(|s| names.iter().all(|n| !n.eq_ignore_ascii_case(s)))
+        .unwrap()
+}
 pub(crate) fn create(
-    document: &mut CadDocument,
+    document: &mut Document,
     definition: Handle,
     location: Vector3,
 ) -> Result<Handle, &'static str> {
@@ -67,14 +77,7 @@ pub(crate) fn create(
     {
         return Err("Specify a finite parameter location.");
     }
-    let names = parameters(document, definition)
-        .iter()
-        .map(|(_, p)| p.lookup_name.clone())
-        .collect::<Vec<_>>();
-    let name = (1..)
-        .map(|n| format!("Lookup{n}"))
-        .find(|s| names.iter().all(|n| !n.eq_ignore_ascii_case(s)))
-        .unwrap();
+    let name = next_name(document, definition);
     let (graph, slots) = authoring::prepare(document, definition)?;
     register_classes(
         document,
@@ -95,7 +98,7 @@ pub(crate) fn create(
     let parameter = BlockLookupParameter {
         parameter: BlockOnePointParameter {
             parameter: BlockParameter {
-                element: element(0, "Lookup"),
+                element: element(0, &name),
                 show_properties: true,
                 chain_actions: false,
             },
@@ -162,7 +165,7 @@ pub(crate) struct Property {
     pub value: String,
 }
 /// These distance and angle bindings match the native Lookup connection names.
-pub(crate) fn properties(document: &CadDocument, definition: Handle) -> Vec<Property> {
+pub(crate) fn properties(document: &Document, definition: Handle) -> Vec<Property> {
     super::block_distance_parameter::parameters(document, definition)
         .iter()
         .flat_map(|p| {
@@ -203,7 +206,7 @@ pub(crate) fn properties(document: &CadDocument, definition: Handle) -> Vec<Prop
         .collect()
 }
 
-pub(crate) fn authoring_properties(document: &CadDocument, definition: Handle) -> Vec<Property> {
+pub(crate) fn authoring_properties(document: &Document, definition: Handle) -> Vec<Property> {
     let mut result = properties(document, definition);
     result.extend(
         parameters(document, definition)
@@ -217,7 +220,7 @@ pub(crate) fn authoring_properties(document: &CadDocument, definition: Handle) -
     result
 }
 pub(crate) fn table(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
     parameter: Handle,
 ) -> Result<Option<(Handle, BlockLookupAction)>, &'static str> {
@@ -248,8 +251,8 @@ pub(crate) fn table(
 
 /// Resolve the active row for a saved reference from its numeric input values.
 fn reference_row_context(
-    document: &CadDocument,
-    baseline: Option<&CadDocument>,
+    document: &Document,
+    baseline: Option<&Document>,
     insert: Handle,
     definition: Handle,
     table: &BlockLookupAction,
@@ -285,7 +288,7 @@ fn reference_row_context(
 
 /// A writable Lookup output as a per-reference property choice.
 pub(crate) fn reference_property(
-    document: &CadDocument,
+    document: &Document,
     insert: Handle,
 ) -> Option<crate::scene::model::object::Property> {
     reference_properties(document, None, 0, insert)
@@ -307,21 +310,21 @@ pub(crate) fn reference_property(
 
 /// Apply a writable Lookup row to a saved reference and materialize its geometry.
 pub(crate) fn evaluate_reference_value(
-    document: &CadDocument,
+    document: &Document,
     insert: Handle,
     lookup_parameter: Handle,
     selected: &str,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     evaluate_value_context(document, None, insert, lookup_parameter, selected)
 }
 
 fn evaluate_value_context(
-    document: &CadDocument,
-    baseline: Option<&CadDocument>,
+    document: &Document,
+    baseline: Option<&Document>,
     insert: Handle,
     lookup_parameter: Handle,
     selected: &str,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     let definition = super::block_actions::instance::definition(document, insert)
         .ok_or("Select a uniformly scaled dynamic block reference.")?;
     let lookup = parameters(baseline.unwrap_or(document), definition)
@@ -355,12 +358,12 @@ fn evaluate_value_context(
 }
 
 fn evaluate_row_context(
-    document: &CadDocument,
-    baseline: Option<&CadDocument>,
+    document: &Document,
+    baseline: Option<&Document>,
     insert: Handle,
     lookup_parameter: Handle,
     row: usize,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     let definition = super::block_actions::instance::definition(document, insert)
         .ok_or("Select a uniformly scaled dynamic block reference.")?;
     let (_, table) =
@@ -370,10 +373,10 @@ fn evaluate_row_context(
         return Err("The selected Lookup row is unavailable.");
     }
     if baseline.is_some() {
-        let Some(codec::EntityType::Insert(reference)) = document.get_entity(insert) else {
+        let Some(document::EntityType::Insert(reference)) = document.get_entity(insert) else {
             return Err("Select a test reference.");
         };
-        if document.entities().any(|e| matches!(e, codec::EntityType::Insert(other) if other.common.handle != insert
+        if document.entities().any(|e| matches!(e, document::EntityType::Insert(other) if other.common.handle != insert
             && (other.block_name == reference.block_name || document.dynamic_definition_for_insert(other.common.handle) == Some(definition)))) {
             return Err("Test actions with one reference in Test Block. Remove the extra references or reopen Test Block.");
         }
@@ -382,8 +385,14 @@ fn evaluate_row_context(
         reference_row_context(document, baseline, insert, definition, &table) != Some(row);
 
     let parameters = super::block_actions::all_parameters(baseline.unwrap_or(document), definition);
+    let flip_plan = super::block_actions::flip_graph::Plan::for_rebuild(
+        baseline.unwrap_or(document),
+        definition,
+    );
     let mut evaluated = document.clone();
-    let frames = if baseline.is_some() {
+    let frames = if let Some(plan) = &flip_plan {
+        plan.load_canonical(document, &mut evaluated, insert, baseline.is_some())?
+    } else if baseline.is_some() {
         super::block_actions::instance::load_test_frames(
             document,
             &mut evaluated,
@@ -393,6 +402,11 @@ fn evaluate_row_context(
     } else {
         super::block_actions::instance::load_frames(document, &mut evaluated, insert, &parameters)?
     };
+    let previous_values = parameters
+        .iter()
+        .filter(|p| !p.flip || flip_plan.is_some())
+        .map(|p| (p.handle, frames[&p.handle].end))
+        .collect();
     let actual = expressions::actual_inputs(document, baseline, definition, insert, &table)?;
     let resolved = expressions::row(baseline.unwrap_or(document), definition, &table, row, &actual, true)?;
     let mut endpoints = std::collections::BTreeMap::new();
@@ -463,21 +477,51 @@ fn evaluate_row_context(
     if !changed {
         return Ok(None);
     }
-    super::block_actions::rebuild_framed(
-        &mut evaluated,
-        baseline.unwrap_or(document),
-        definition,
-        &frames,
-    )?;
-    let values = parameters
+    let requested = parameters
         .iter()
-        .map(|parameter| super::block_actions::value(&evaluated, parameter))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut result =
-        super::block_actions::instance::materialize(document, insert, definition, &evaluated)?;
-    for (parameter, value) in parameters.into_iter().zip(values) {
-        super::block_actions::instance::save(&mut result, insert, &parameter, value)?;
-    }
+        .filter(|p| endpoints.contains_key(&p.id))
+        .map(|p| p.handle)
+        .collect();
+    let previous = super::block_actions::RebuildInputs {
+        document: baseline.unwrap_or(document),
+        frames: &frames,
+        values: &previous_values,
+        requested: &requested,
+        migrated_inputs: None,
+    };
+    let result = if let Some(plan) = flip_plan {
+        plan.rebuild_reference(
+            document,
+            &mut evaluated,
+            baseline.unwrap_or(document),
+            definition,
+            insert,
+            &frames,
+            previous,
+        )?
+    } else {
+        let action_bases = super::block_actions::instance::load_action_bases(document, insert, definition).unwrap_or_default();
+        let resolved_frames = super::block_actions::rebuild_framed(
+            &mut evaluated,
+            baseline.unwrap_or(document),
+            definition,
+            &frames,
+            Some(&action_bases),
+            Some(previous),
+        )?;
+        let mut result =
+            super::block_actions::instance::materialize(document, insert, definition, &evaluated)?;
+        super::block_actions::instance::save_action_bases(&mut result, insert, definition, &action_bases)?;
+        for parameter in &parameters {
+            if let Some(frame) = resolved_frames.get(&parameter.handle) {
+                super::block_actions::instance::save_frame(&mut result, insert, parameter, *frame)?;
+            } else {
+                let value = super::block_actions::value(&evaluated, parameter)?;
+                super::block_actions::instance::save(&mut result, insert, parameter, value)?;
+            }
+        }
+        result
+    };
     if reference_row_context(&result, baseline, insert, definition, &table) != Some(row) {
         return Err("The Lookup row values do not satisfy the parameter value sets.");
     }
@@ -485,28 +529,28 @@ fn evaluate_row_context(
 }
 
 pub(crate) fn evaluate_reference_choice(
-    document: &CadDocument,
+    document: &Document,
     insert: Handle,
     selected: &str,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     evaluate_choice_context(document, None, insert, selected)
 }
 
 pub(crate) fn evaluate_test_choice(
-    document: &CadDocument,
-    baseline: &CadDocument,
+    document: &Document,
+    baseline: &Document,
     insert: Handle,
     selected: &str,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     evaluate_choice_context(document, Some(baseline), insert, selected)
 }
 
 fn evaluate_choice_context(
-    document: &CadDocument,
-    baseline: Option<&CadDocument>,
+    document: &Document,
+    baseline: Option<&Document>,
     insert: Handle,
     selected: &str,
-) -> Result<Option<CadDocument>, &'static str> {
+) -> Result<Option<Document>, &'static str> {
     let definition = super::block_actions::instance::definition(document, insert)
         .ok_or("Select a uniformly scaled dynamic block reference.")?;
     let mut seen = std::collections::HashSet::new();
@@ -574,10 +618,38 @@ pub(crate) fn empty_table(parameter: &BlockLookupParameter) -> BlockLookupAction
         ..Default::default()
     }
 }
+/// An all-empty row is the blank entry row, not part of the applied table.
+pub(crate) fn without_blank_rows(table: &BlockLookupAction) -> BlockLookupAction {
+    let cols = table.columns.len();
+    let rows = table.row_count.max(0) as usize;
+    if cols == 0 || table.expressions.len() != rows * cols {
+        return table.clone();
+    }
+    let kept: Vec<usize> = (0..rows)
+        .filter(|row| (0..cols).any(|col| !table.expressions[row * cols + col].trim().is_empty()))
+        .collect();
+    if kept.len() == rows {
+        return table.clone();
+    }
+    let mut compacted = table.clone();
+    compacted.expressions = kept
+        .iter()
+        .flat_map(|row| {
+            table.expressions[row * cols..(row + 1) * cols]
+                .iter()
+                .cloned()
+        })
+        .collect();
+    compacted.row_count = kept.len() as i32;
+    compacted
+}
+
 pub(crate) fn validate(
     table: &BlockLookupAction,
     original: Option<&BlockLookupAction>,
 ) -> Result<(), String> {
+    let compacted = without_blank_rows(table);
+    let table = &compacted;
     let rows = usize::try_from(table.row_count).map_err(|_| "Invalid table size.")?;
     let cols = table.columns.len();
     if rows == 0
@@ -600,7 +672,12 @@ pub(crate) fn validate(
         let mut key = vec![];
         for (col, property) in table.columns.iter().enumerate() {
             let cell = &table.expressions[row * cols + col];
-            if cell.trim().is_empty() || cell.chars().any(char::is_control) {
+            // An empty cell is the same fault in either table dialog, so it
+            // gets the same message; control characters keep their own.
+            if cell.trim().is_empty() {
+                return Err("Each cell must be a finite number.".into());
+            }
+            if cell.chars().any(char::is_control) {
                 return Err("Complete each cell without control characters.".into());
             }
             if property.lookup_property {
@@ -639,7 +716,7 @@ pub(crate) fn validate(
     Ok(())
 }
 pub(crate) fn apply_table(
-    document: &mut CadDocument,
+    document: &mut Document,
     definition: Handle,
     parameter: Handle,
     edited: BlockLookupAction,
@@ -650,11 +727,12 @@ pub(crate) fn apply_table(
     Ok(handle)
 }
 fn apply_table_inner(
-    document: &mut CadDocument,
+    document: &mut Document,
     definition: Handle,
     parameter: Handle,
-    mut edited: BlockLookupAction,
+    edited: BlockLookupAction,
 ) -> Result<Handle, String> {
+    let mut edited = without_blank_rows(&edited);
     let previous = table(document, definition, parameter).map_err(str::to_string)?;
     validate(&edited, previous.as_ref().map(|(_, t)| t))?;
     expressions::validate_context(document, definition, &edited, previous.as_ref().map(|(_, t)| t))?;
@@ -748,7 +826,7 @@ fn apply_table_inner(
     Ok(handle)
 }
 pub(crate) fn reframe(
-    document: &mut CadDocument,
+    document: &mut Document,
     definition: Handle,
     transform: &Transform,
 ) -> usize {
@@ -794,7 +872,7 @@ pub(crate) fn reframe(
 /// Stage formula rewrites only in owned tables that bind the renamed input.
 /// Every failure occurs before metadata or native table objects are changed.
 pub(crate) fn renamed_input_tables(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
     parameter: Handle,
     field: crate::scene::block_authoring::metadata::Field,

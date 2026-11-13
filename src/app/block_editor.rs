@@ -1,30 +1,31 @@
-use super::document::{
+use super::tab_document::{
     DeltaSnapshot, HistorySnapshot, HistoryState, ParametricConstraintsEntryDelta,
     StructureSnapshot,
 };
 use super::{Message, ModalKind, OpenCADStudio};
-use codec::{CadDocument, EntityType};
+use document::{Document, EntityType};
 use iced::Task;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A single save checkpoint. Entity payloads remain shared through the
 /// document's Arc storage; only modified entities detach during editing.
 pub(super) struct BlockEditCheckpoint {
-    document: CadDocument,
-    structure: CadDocument,
+    document: Document,
+    structure: Document,
     constraints: Vec<crate::scene::parametric_constraints::ParametricConstraintSet>,
     parameters: crate::scene::named_parameters::ParameterTable,
     dirty: bool,
     active_layer: String,
-    hatches: FxHashMap<codec::Handle, crate::scene::HatchModel>,
-    images: FxHashMap<codec::Handle, crate::scene::ImageModel>,
-    meshes: FxHashMap<codec::Handle, crate::scene::MeshLodSet>,
-    block_meshes: FxHashMap<codec::Handle, crate::scene::MeshLodSet>,
-    solid_models: FxHashMap<codec::Handle, kernel::brep::Body>,
+    hatches: FxHashMap<document::Handle, crate::scene::HatchModel>,
+    images: FxHashMap<document::Handle, crate::scene::ImageModel>,
+    meshes: FxHashMap<document::Handle, crate::scene::MeshLodSet>,
+    block_meshes: FxHashMap<document::Handle, crate::scene::MeshLodSet>,
+    solid_models: FxHashMap<document::Handle, kernel::brep::Body>,
 }
 
 pub(super) struct BlockEditHistory {
     pub main: HistoryState,
+    pub id: u64,
     checkpoint: BlockEditCheckpoint,
     return_isolation: crate::scene::ObjectIsolationState,
 }
@@ -49,7 +50,34 @@ fn same_constraints(
         && before.dimensions == after.dimensions
 }
 
-fn normalize_allocation(document: &mut CadDocument, next: u64) {
+/// Number of block references in the drawing that resolve to `definition`,
+/// including references whose anonymous representation record points at it.
+/// References nested inside another definition are not drawing instances and
+/// are left out.
+pub(super) fn block_reference_count(
+    scene: &crate::scene::Scene,
+    definition: document::Handle,
+) -> usize {
+    let document = &scene.document;
+    // Model- and paper-space records also list their contents; only records
+    // without a layout are definitions whose children are not drawn directly.
+    let inside_definition: FxHashSet<document::Handle> = document
+        .block_records
+        .iter()
+        .filter(|record| record.layout.is_null())
+        .flat_map(|record| record.entity_handles.iter().copied())
+        .collect();
+    document
+        .entities()
+        .filter(|entity| matches!(entity, EntityType::Insert(_)))
+        .filter(|entity| !inside_definition.contains(&entity.common().handle))
+        .filter(|entity| {
+            document.dynamic_definition_for_insert(entity.common().handle) == Some(definition)
+        })
+        .count()
+}
+
+fn normalize_allocation(document: &mut Document, next: u64) {
     if document.next_handle() < next {
         document.header.handle_seed = next - 1;
         document.allocate_handle();
@@ -101,12 +129,15 @@ impl OpenCADStudio {
     }
 
     pub(super) fn begin_block_edit_history(&mut self, i: usize) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
         self.finish_pending_history(i);
         let checkpoint = self.block_edit_checkpoint(i);
         let main = std::mem::take(&mut self.tabs[i].history);
         let return_isolation = self.tabs[i].scene.object_isolation.clone();
         self.tabs[i].block_edit_history = Some(BlockEditHistory {
             main,
+            id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             checkpoint,
             return_isolation,
         });
@@ -131,7 +162,7 @@ impl OpenCADStudio {
         } else {
             (&checkpoint.document, checkpoint.structure.clone())
         };
-        let mut candidate_handles: FxHashSet<codec::Handle> = FxHashSet::default();
+        let mut candidate_handles: FxHashSet<document::Handle> = FxHashSet::default();
         if let Some(record) = before_doc.block_records.get(&session.block_name) {
             candidate_handles.extend(record.entity_handles.iter().copied());
             if !record.block_entity_handle.is_null() {
@@ -150,16 +181,29 @@ impl OpenCADStudio {
                 candidate_handles.insert(record.block_end_handle);
             }
         }
-        // Action-set edits can rebuild anonymous references outside the editor
-        // definition. Include their entities in the single drawing save delta.
+        if for_save {
+            // Save As can add both a definition and previously unsaved nested
+            // representations. The structure snapshot carries their records;
+            // the entity delta must carry their bodies and markers.
+            let prior: FxHashSet<_> = before_doc.block_records.iter().map(|b| b.handle).collect();
+            for record in tab.scene.document.block_records.iter().filter(|b| !prior.contains(&b.handle)) {
+                candidate_handles.extend(record.entity_handles.iter().copied());
+                candidate_handles.insert(record.block_entity_handle);
+                candidate_handles.insert(record.block_end_handle);
+            }
+        }
+        // Action-set edits can rebuild external references to this definition,
+        // and nested property edits can rebuild a child representation.
         for document in [before_doc, &tab.scene.document] {
             for entity in document.entities() {
                 if let EntityType::Insert(insert) = entity {
-                    if document.dynamic_definition_for_insert(insert.common.handle)
-                        == Some(session.br_handle)
-                    {
+                    let definition = document.dynamic_definition_for_insert(insert.common.handle);
+                    let record = document.block_records.get(&insert.block_name);
+                    let nested_representation = insert.common.owner_handle == session.br_handle
+                        && record.is_some_and(|record| definition.is_some_and(|def| def != record.handle));
+                    if definition == Some(session.br_handle) || nested_representation {
                         candidate_handles.insert(insert.common.handle);
-                        if let Some(record) = document.block_records.get(&insert.block_name) {
+                        if let Some(record) = record {
                             candidate_handles.extend(record.entity_handles.iter().copied());
                             candidate_handles.insert(record.block_entity_handle);
                             candidate_handles.insert(record.block_end_handle);
@@ -271,12 +315,14 @@ impl OpenCADStudio {
             selected_after: Vec::new(),
             dirty_before: checkpoint.dirty,
             dirty_after: true,
+            view: None,
             active_layer,
+            layiso_state: None,
             structure,
             parametric_constraints,
             reference_designations: Vec::new(),
             named_parameters,
-            label: format!("Edit block {}", session.block_name),
+            label: super::tab_document::HistoryLabel::formatted(format!("Edit block {}", session.block_name), "edit-block", session.block_name.to_owned().into()),
         })
     }
 
@@ -390,7 +436,16 @@ impl OpenCADStudio {
         };
         let id = state.document_id;
         let name = state.name.trim().to_string();
-        if name.is_empty() || state.error.is_some() {
+        let refused = state.error.is_some();
+        if name.is_empty() || refused {
+            if name.is_empty() {
+                // `OK` is reachable with an empty field, and silence is not an
+                // answer: say what the field is short of.
+                let state = self.block_edit_picker.as_mut().unwrap();
+                state.error = Some(
+                    crate::t!("The name must be at least one character long.").into_owned(),
+                );
+            }
             return Task::none();
         }
         let Some(i) = self.tabs.iter().position(|tab| tab.id == id) else {
@@ -567,7 +622,7 @@ impl OpenCADStudio {
         let mut delta = self
             .block_edit_delta(i, true)
             .expect("a new definition changes the document");
-        delta.label = format!("Save block as {name}");
+        delta.label = super::tab_document::HistoryLabel::formatted(format!("Save block as {name}"), "save-block", name.to_owned().into());
         let mut history = self.tabs[i].block_edit_history.take().unwrap();
         std::mem::swap(&mut self.tabs[i].history, &mut history.main);
         self.push_undo_entry(i, HistorySnapshot::Delta(Box::new(delta)));
@@ -602,7 +657,7 @@ impl OpenCADStudio {
 
     /// Save-time representation edits belong to the preceding editor command,
     /// so local Undo cannot leave untracked members or reuse their handles.
-    fn coalesce_saved_representations(&mut self, i: usize, before: &CadDocument) {
+    fn coalesce_saved_representations(&mut self, i: usize, before: &Document) {
         let tab = &mut self.tabs[i];
         let doc = &tab.scene.document;
         if before == doc {
@@ -718,6 +773,16 @@ impl OpenCADStudio {
             }
             self.tabs[i].scene.visibility_states.remove(&definition);
         }
+        // The saved definition advertises attributes because its body holds
+        // them, so an attribute authored here marks the record and erasing the
+        // last one takes the mark off again.
+        crate::scene::Scene::sync_attribute_flag(&mut self.tabs[i].scene.document, &name);
+        // The saved definition's terminator belongs after its body. The undo
+        // entry below is taken afterwards, so it carries the swap.
+        if let Err(error) = self.tabs[i].scene.reterminate_block_definition(&name) {
+            self.command_line.push_error(&error);
+            return false;
+        }
         if let Some(delta) = self.block_edit_delta(i, true) {
             let mut history = self.tabs[i].block_edit_history.take().unwrap();
             std::mem::swap(&mut self.tabs[i].history, &mut history.main);
@@ -763,6 +828,8 @@ impl OpenCADStudio {
             self.tabs[i].scene.object_isolation = history.return_isolation;
         }
         self.tabs[i].active_block_edit = None;
+        // An open Parameters Manager cell belongs to the session that ended.
+        self.tabs[i].parameters_panel = Default::default();
         self.restore_after_block_edit_close(
             i,
             None,
@@ -780,10 +847,14 @@ impl OpenCADStudio {
         continuation: BlockEditContinuation,
     ) -> Task<Message> {
         let id = self.tabs[i].id;
-        if self.tabs[i].active_block_edit_session().is_some() {
+        if let Some(definition) = self.tabs[i]
+            .active_block_edit_session()
+            .map(|session| session.br_handle)
+        {
             if self.block_edit_dirty(i) {
+                let references = block_reference_count(&self.tabs[i].scene, definition);
                 self.active_tab = i;
-                self.pending_block_close = Some((self.tabs[i].id, continuation));
+                self.pending_block_close = Some((self.tabs[i].id, continuation, references));
                 self.active_modal = Some(ModalKind::BlockEditChanges);
                 return Task::none();
             }
@@ -830,7 +901,7 @@ impl OpenCADStudio {
     }
 
     pub(super) fn resolve_block_edit_close(&mut self, save: bool) -> Task<Message> {
-        let Some((id, continuation)) = self.pending_block_close.clone() else {
+        let Some((id, continuation, _references)) = self.pending_block_close.clone() else {
             return Task::none();
         };
         let Some(i) = self.tabs.iter().position(|tab| tab.id == id) else {
@@ -850,7 +921,7 @@ impl OpenCADStudio {
     pub(super) fn cancel_block_edit_close(&mut self) {
         self.pending_block_close = None;
         self.pending_tab_closes.clear();
-        if self.active_modal == Some(ModalKind::BlockEditChanges) {
+        if self.focus_dialog(ModalKind::BlockEditChanges) {
             self.active_modal = None;
         }
     }

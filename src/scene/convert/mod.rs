@@ -10,4 +10,8 @@ pub mod tess_util;
 pub mod tessellate;
 
 #[cfg(test)]
+mod complex_lt_tests;
+#[cfg(test)]
+mod dash_layout_tests;
+#[cfg(test)]
 mod region_snap_tests;

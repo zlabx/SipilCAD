@@ -1,6 +1,6 @@
 //! Plot style tables in Open CAD Studio: the plot styles folder, the tables
 //! registered this session, and the shipped ones. The table model and its
-//! CTB/STB codec live in `codec::plot_style`.
+//! CTB/STB codec live in `document::plot_style`.
 
 use rustc_hash::FxHashMap as HashMap;
 use std::path::{Component, Path};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-pub use codec::plot_style::{decode_plot_style_text, PlotStyleEntry, PlotStyleTable, LW_TABLE};
+pub use document::plot_style::{decode_plot_style_text, PlotStyleEntry, PlotStyleTable, LW_TABLE};
 
 pub const DEFAULT_PLOT_STYLE: &str = "ocad.ctb";
 pub const MONOCHROME_PLOT_STYLE: &str = "monochrome.ctb";
@@ -194,7 +194,7 @@ impl PlotStyleTableExt for PlotStyleTable {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        Self::from_bytes(name, &raw)
+        Self::from_bytes(name, &raw).map_err(|e| e.to_string())
     }
 
     fn builtin(name: &str) -> Result<Self, String> {
@@ -202,15 +202,17 @@ impl PlotStyleTableExt for PlotStyleTable {
             DEFAULT_PLOT_STYLE => Self::from_bytes(
                 DEFAULT_PLOT_STYLE,
                 include_bytes!("../../assets/plotstyles/ocad.ctb"),
-            ),
+            )
+            .map_err(|e| e.to_string()),
             MONOCHROME_PLOT_STYLE => Self::from_bytes(
                 MONOCHROME_PLOT_STYLE,
                 include_bytes!("../../assets/plotstyles/monochrome.ctb"),
-            ),
+            )
+            .map_err(|e| e.to_string()),
             "grayscale.ctb" => {
                 let mut table = Self::identity(GRAYSCALE_PLOT_STYLE);
                 for aci in 1..=255u8 {
-                    if let Some((r, g, b)) = codec::types::aci_to_rgb(aci) {
+                    if let Some((r, g, b)) = document::types::aci_to_rgb(aci) {
                         let gray = if aci == 7 {
                             0
                         } else {
@@ -265,7 +267,7 @@ impl PlotStyleTableExt for PlotStyleTable {
         // Empty on native, so the folder search below stays authoritative
         // there; on the web this is the only place a picked table lives.
         if let Some(bytes) = session_table(name) {
-            return Self::from_bytes(name, &bytes);
+            return Self::from_bytes(name, &bytes).map_err(|e| e.to_string());
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -298,7 +300,8 @@ impl PlotStyleTableExt for PlotStyleTable {
 
     /// Write this table to disk as a CTB/STB file.
     fn save(&self, path: &Path) -> Result<(), String> {
-        std::fs::write(path, self.to_bytes()?).map_err(|e| e.to_string())
+        let bytes = self.to_bytes().map_err(|e| e.to_string())?;
+        std::fs::write(path, bytes).map_err(|e| e.to_string())
     }
 }
 

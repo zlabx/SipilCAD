@@ -9,7 +9,7 @@
 // completed selection action fires straight away, no Enter required.
 
 use crate::t;
-use codec::Handle;
+use document::Handle;
 use glam::DVec3;
 
 use crate::command::{CadCommand, CmdOption, CmdResult};
@@ -43,9 +43,12 @@ pub struct SelectObjectsCommand {
     associative_dimensions_only: bool,
     /// The kinds of object the command takes; the host drops the rest of
     /// each completed selection silently, and Enter on nothing ends quietly.
-    keep: Option<fn(&codec::EntityType) -> bool>,
+    keep: Option<fn(&document::EntityType) -> bool>,
     /// A SEttings keyword at the prompt, and what it does.
     settings: Option<fn() -> CmdResult>,
+    /// A command's own keyword at the prompt (its label, the keyword and
+    /// what it does).
+    keyword: Option<(&'static str, &'static str, fn() -> CmdResult)>,
 }
 
 impl SelectObjectsCommand {
@@ -64,6 +67,7 @@ impl SelectObjectsCommand {
             associative_dimensions_only: false,
             keep: None,
             settings: None,
+            keyword: None,
         }
     }
 
@@ -83,6 +87,7 @@ impl SelectObjectsCommand {
             associative_dimensions_only: false,
             keep: None,
             settings: None,
+            keyword: None,
         }
     }
 
@@ -102,6 +107,7 @@ impl SelectObjectsCommand {
             associative_dimensions_only: false,
             keep: None,
             settings: None,
+            keyword: None,
         }
     }
 
@@ -121,6 +127,7 @@ impl SelectObjectsCommand {
             associative_dimensions_only: false,
             keep: None,
             settings: None,
+            keyword: None,
         }
     }
 
@@ -149,10 +156,25 @@ impl SelectObjectsCommand {
         prompt_cmd: &str,
         pending_cmd: &str,
         prompt_text: &'static str,
-        keep: fn(&codec::EntityType) -> bool,
+        keep: fn(&document::EntityType) -> bool,
     ) -> Self {
         let mut command = Self::with_prompt(prompt_cmd, pending_cmd, prompt_text);
         command.keep = Some(keep);
+        command
+    }
+
+    /// The command's own wording with one keyword of its own (`label`, typed
+    /// as `keyword` or its capitals).
+    pub fn with_keyword(
+        prompt_cmd: &str,
+        pending_cmd: &str,
+        prompt_text: &'static str,
+        label: &'static str,
+        keyword: &'static str,
+        action: fn() -> CmdResult,
+    ) -> Self {
+        let mut command = Self::with_prompt(prompt_cmd, pending_cmd, prompt_text);
+        command.keyword = Some((label, keyword, action));
         command
     }
 
@@ -174,6 +196,16 @@ impl SelectObjectsCommand {
         command.auto_constrain_settings = true;
         command
     }
+}
+
+thread_local! {
+    /// Remove mode of the selection being gathered (R / A at the prompt):
+    /// the prompt then reads "Remove objects:".
+    static REMOVE_MODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn set_remove_mode(on: bool) {
+    REMOVE_MODE.with(|mode| mode.set(on));
 }
 
 impl CadCommand for SelectObjectsCommand {
@@ -206,31 +238,15 @@ impl CadCommand for SelectObjectsCommand {
             )
             .into_owned();
         }
-        if self.commit_on_enter && !self.handles.is_empty() {
-            if self.auto_constrain_settings {
-                return t!(
-                    "%{cmd}  Select objects or [Settings] (%{count} selected, Enter to apply):",
-                    cmd = self.prompt_cmd,
-                    count = self.handles.len()
-                )
-                .into_owned();
-            }
-            t!(
-                "%{cmd}  Select objects (%{count} selected, Enter to apply):",
-                cmd = self.prompt_cmd,
-                count = self.handles.len()
-            )
-            .into_owned()
-        } else {
-            if self.auto_constrain_settings {
-                return t!(
-                    "%{cmd}  Select objects or [Settings]:",
-                    cmd = self.prompt_cmd
-                )
-                .into_owned();
-            }
-            t!("%{cmd}  Select objects:", cmd = self.prompt_cmd).into_owned()
+        if REMOVE_MODE.with(|mode| mode.get()) {
+            return t!("%{cmd}  Remove objects:", cmd = self.prompt_cmd).into_owned();
         }
+        // The reference asks the same "Select objects:" however many are
+        // picked; each pick's count is its own "N found" line.
+        if self.auto_constrain_settings {
+            return t!("%{cmd}  Select objects or [Settings]:", cmd = self.prompt_cmd).into_owned();
+        }
+        t!("%{cmd}  Select objects:", cmd = self.prompt_cmd).into_owned()
     }
 
     // Opt into the selection-gathering path; host routes clicks through
@@ -249,7 +265,7 @@ impl CadCommand for SelectObjectsCommand {
         self.associative_dimensions_only
     }
 
-    fn selection_entity_filter(&self) -> Option<fn(&codec::EntityType) -> bool> {
+    fn selection_entity_filter(&self) -> Option<fn(&document::EntityType) -> bool> {
         self.keep
     }
 
@@ -270,7 +286,10 @@ impl CadCommand for SelectObjectsCommand {
     // the on-screen keyboard-less case needs.
     fn options(&self) -> Vec<CmdOption> {
         if self.settings.is_some() && self.pick.is_none() {
-            return vec![CmdOption::new("SEttings", "SE")];
+            return vec![CmdOption::new(t!("Settings").as_ref(), "SE")];
+        }
+        if let (Some((label, keyword, _)), None) = (self.keyword, self.pick.as_ref()) {
+            return vec![CmdOption::new(label, keyword)];
         }
         if self.commit_on_enter && self.show_options {
             if self.auto_constrain_settings {
@@ -347,7 +366,18 @@ impl CadCommand for SelectObjectsCommand {
                 return Some(settings());
             }
         }
+        if let Some((label, keyword, action)) = self.keyword {
+            let capitals: String = label.chars().filter(char::is_ascii_uppercase).collect();
+            if word == keyword || word == capitals || word == label.to_ascii_uppercase() {
+                return Some(action());
+            }
+        }
         match text.trim().to_uppercase().as_str() {
+            // SIngle: the next selection ends the prompt.
+            "SI" | "SINGLE" => {
+                self.commit_on_enter = false;
+                Some(CmdResult::NeedPoint)
+            }
             "S" | "SETTINGS" if self.auto_constrain_settings => {
                 Some(CmdResult::OpenAutoConstrainSettings)
             }
@@ -424,6 +454,9 @@ inventory::submit!(crate::command::CommandRegistration {
         "COPY",
         "COPYCLIP",
         "CUTCLIP",
+        "DCDISPLAY",
+        "DIMDISASSOCIATE",
+        "DIMREASSOCIATE",
         "ERASE",
         "EXPLODE",
         "GROUP",

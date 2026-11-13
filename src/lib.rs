@@ -3,6 +3,10 @@
 
 pub mod app;
 
+/// The Quad display-option message, re-exported at the crate root so every
+/// surface reaches it as `crate::QuadOptionMsg` (see `app/mod.rs`).
+pub(crate) use app::QuadOptionMsg;
+
 /// Tests that build a headless iced renderer take this first: two made in
 /// parallel crash the process, wherever in the crate they run.
 #[cfg(test)]
@@ -17,6 +21,7 @@ pub mod config;
 pub mod discussions;
 pub mod entities;
 pub(crate) mod entity_creation;
+pub mod filter;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gpu_backend;
 pub mod i18n;
@@ -25,19 +30,20 @@ pub mod io;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod mcp_intent;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mcp_ops;
 pub mod modules;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod network;
 pub mod par;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod parametric;
 pub mod patreon;
 pub mod perf;
 pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rest;
-pub mod sipil_wall; // SIPIL: tembok bata, komponen bangunan (lihat src/sipil_wall/)
-pub mod sipil_arch; // SIPIL: komponen bangunan (pintu, dst.) dan registry-nya (lihat src/sipil_arch/)
-pub mod sipil_project; // SIPIL: project browser ala Revit (lihat src/sipil_project/)
 pub mod scene;
 pub(crate) mod schema_validation;
 pub mod sipil; // SIPIL: tambahan khusus SipilCAD (lihat src/sipil.rs)

@@ -1,6 +1,6 @@
 //! Inter-process communication layer for out-of-process plugins.
 //!
-//! Built only with the `host` feature because it needs `opencadcodec`-typed
+//! Built only with the `host` feature because it needs `document`-typed
 //! messages and the plugin runner binary.
 //!
 //! Submodules:
@@ -259,6 +259,8 @@ mod tests {
             discriminant(&HostResponse::CustomGrip(crate::host::CustomGripResponse {
                 preview: Vec::new(),
                 live_entities: Default::default(),
+                descriptor: Default::default(),
+                descriptor_tolerance: Default::default(),
             })),
             8
         );
@@ -295,9 +297,13 @@ mod tests {
         // and a settle event with its preview-wire answer.
         let grips = vec![crate::host::PluginGrip {
             grip_id: 42,
-            anchor: Some(codec::Handle::from(0x8A)),
+            anchor: Some(document::Handle::from(0x8A)),
             point: [12.5, -3.25, 0.0],
-            axis: Some([0.7071067811865476, 0.7071067811865476, 0.0]),
+            axis: Some([
+                std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+                0.0,
+            ]),
             shape: crate::host::PluginGripShape::Triangle,
         }];
         let req = crate::ipc::protocol::PluginRequest::SetPluginGrips { grips };
@@ -307,7 +313,7 @@ mod tests {
             crate::ipc::protocol::PluginRequest::SetPluginGrips { grips } => {
                 assert_eq!(grips.len(), 1);
                 assert_eq!(grips[0].grip_id, 42);
-                assert_eq!(grips[0].anchor, Some(codec::Handle::from(0x8A)));
+                assert_eq!(grips[0].anchor, Some(document::Handle::from(0x8A)));
                 assert_eq!(grips[0].shape, crate::host::PluginGripShape::Triangle);
             }
             other => panic!("unexpected: {other:?}"),
@@ -340,12 +346,14 @@ mod tests {
             // API v12: the live-geometry channel rides the same response;
             // an old (v11) answer without it decodes default-empty above.
             live_entities: vec![(
-                codec::Handle::from(2),
-                codec::EntityType::Line(codec::entities::Line::from_points(
-                    codec::types::Vector3::new(0.0, 0.0, 0.0),
-                    codec::types::Vector3::new(3.0, 0.0, 0.0),
+                document::Handle::from(2),
+                document::EntityType::Line(document::entities::Line::from_points(
+                    document::types::Vector3::new(0.0, 0.0, 0.0),
+                    document::types::Vector3::new(3.0, 0.0, 0.0),
                 )),
             )],
+            descriptor: None,
+            descriptor_tolerance: None,
         });
         let bytes = bincode::serialize(&answer).unwrap();
         let got: HostResponse = bincode::deserialize(&bytes).unwrap();
@@ -353,7 +361,7 @@ mod tests {
             HostResponse::CustomGrip(resp) => {
                 assert_eq!(resp.preview.len(), 1);
                 assert_eq!(resp.live_entities.len(), 1);
-                assert_eq!(resp.live_entities[0].0, codec::Handle::from(2));
+                assert_eq!(resp.live_entities[0].0, document::Handle::from(2));
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -367,8 +375,8 @@ mod tests {
         let regions = HostNotification::DocumentChangedRegions {
             tab_id: 12,
             version: 93,
-            entities: vec![codec::Handle::from(0x2A)],
-            records: vec![(codec::Handle::from(0x8A), "CVIFC".to_string())],
+            entities: vec![document::Handle::from(0x2A)],
+            records: vec![(document::Handle::from(0x8A), "CVIFC".to_string())],
         };
         let bytes = bincode::serialize(&regions).unwrap();
         let got: HostNotification = bincode::deserialize(&bytes).unwrap();
@@ -380,18 +388,21 @@ mod tests {
                 records,
             } => {
                 assert_eq!((tab_id, version), (12, 93));
-                assert_eq!(entities, vec![codec::Handle::from(0x2A)]);
+                assert_eq!(entities, vec![document::Handle::from(0x2A)]);
                 assert_eq!(
                     records,
-                    vec![(codec::Handle::from(0x8A), "CVIFC".to_string())]
+                    vec![(document::Handle::from(0x8A), "CVIFC".to_string())]
                 );
             }
             other => panic!("unexpected: {other:?}"),
         }
-        // And a v11-shaped answer (no live_entities) still decodes.
+        // And a v11-shaped answer (no live_entities, no descriptor) still
+        // decodes: both later fields deserialize to their defaults.
         let old = HostResponse::CustomGrip(crate::host::CustomGripResponse {
             preview: Vec::new(),
             live_entities: Default::default(),
+            descriptor: Default::default(),
+            descriptor_tolerance: Default::default(),
         });
         let bytes = bincode::serialize(&old).unwrap();
         let got: HostResponse = bincode::deserialize(&bytes).unwrap();
@@ -401,7 +412,7 @@ mod tests {
         }
         // The per-entity read frames round-trip too (API v12).
         let req = crate::ipc::protocol::PluginRequest::GetEntitiesBatch {
-            handles: vec![codec::Handle::from(1), codec::Handle::from(2)],
+            handles: vec![document::Handle::from(1), document::Handle::from(2)],
         };
         let bytes = bincode::serialize(&req).unwrap();
         let got: crate::ipc::protocol::PluginRequest = bincode::deserialize(&bytes).unwrap();

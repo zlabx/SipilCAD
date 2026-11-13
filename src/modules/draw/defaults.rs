@@ -7,7 +7,7 @@ thread_local! {
     static ROTATE_ANGLE:    Cell<f64> = Cell::new(0.0);   // degrees
     static SCALE_FACTOR:    Cell<f64> = Cell::new(1.0);
     static OFFSET_DIST:     Cell<f64> = Cell::new(1.0);
-    static FILLET_RADIUS:   Cell<f64> = Cell::new(1.0);
+    static FILLET_RADIUS:   Cell<f64> = Cell::new(0.0);
     static CHAMFER_DIST1:   Cell<f64> = Cell::new(10.0);
     static CHAMFER_DIST2:   Cell<f64> = Cell::new(10.0);
     static ARRAY_ROWS:      Cell<f64> = Cell::new(2.0);
@@ -17,6 +17,8 @@ thread_local! {
     static ARRAY_P_COUNT:   Cell<f64> = Cell::new(6.0);
     static ARRAY_P_ANGLE:   Cell<f64> = Cell::new(360.0); // degrees
     static ARRAY_PATH_COUNT: Cell<f64> = Cell::new(6.0);
+    static ARRAY_PATH_SPACING: Cell<f64> = Cell::new(0.0);
+    static ARRAY_PATH_MEASURE: Cell<f64> = Cell::new(1.0);
     static ARRAY_ASSOC:     Cell<f64> = Cell::new(1.0); // 1 = associative
     static POLYGON_SIDES:   Cell<f64> = Cell::new(6.0);
     static RECT_ELEVATION:  Cell<f64> = Cell::new(0.0);
@@ -27,6 +29,9 @@ thread_local! {
     static RECT_CHAMFER1:   Cell<f64> = Cell::new(0.0);
     static RECT_CHAMFER2:   Cell<f64> = Cell::new(0.0);
     static RECT_FILLET:     Cell<f64> = Cell::new(0.0);
+    static RECT_AREA:       Cell<f64> = Cell::new(100.0);
+    static RECT_LENGTH:     Cell<f64> = Cell::new(10.0);
+    static RECT_SIDE:       Cell<f64> = Cell::new(10.0);
     static DONUT_INNER_DIAMETER: Cell<f64> = Cell::new(0.5);
     static DONUT_OUTER_DIAMETER: Cell<f64> = Cell::new(1.0);
     static HELIX_BASE_RADIUS: Cell<f64> = Cell::new(1.0);
@@ -70,6 +75,8 @@ accessors!(get_array_col_sp, set_array_col_sp, ARRAY_COL_SP);
 accessors!(get_array_p_count, set_array_p_count, ARRAY_P_COUNT);
 accessors!(get_array_p_angle, set_array_p_angle, ARRAY_P_ANGLE);
 accessors!(get_array_path_count, set_array_path_count, ARRAY_PATH_COUNT);
+accessors!(get_array_path_spacing, set_array_path_spacing, ARRAY_PATH_SPACING);
+accessors!(get_array_path_measure, set_array_path_measure, ARRAY_PATH_MEASURE);
 accessors!(get_polygon_sides, set_polygon_sides, POLYGON_SIDES);
 accessors!(get_rect_elevation, set_rect_elevation, RECT_ELEVATION);
 accessors!(get_rect_thickness, set_rect_thickness, RECT_THICKNESS);
@@ -79,6 +86,9 @@ accessors!(get_rect_rotation, set_rect_rotation, RECT_ROTATION);
 accessors!(get_rect_chamfer1, set_rect_chamfer1, RECT_CHAMFER1);
 accessors!(get_rect_chamfer2, set_rect_chamfer2, RECT_CHAMFER2);
 accessors!(get_rect_fillet, set_rect_fillet, RECT_FILLET);
+accessors!(get_rect_area, set_rect_area, RECT_AREA);
+accessors!(get_rect_length, set_rect_length, RECT_LENGTH);
+accessors!(get_rect_side, set_rect_side, RECT_SIDE);
 accessors!(
     get_helix_base_radius,
     set_helix_base_radius,

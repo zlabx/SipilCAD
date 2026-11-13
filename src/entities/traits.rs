@@ -1,4 +1,4 @@
-use codec::{CadDocument, EntityType};
+use document::{Document, EntityType};
 
 use crate::command::EntityTransform;
 use crate::scene::convert::acad_to_render::RenderEntity;
@@ -6,7 +6,7 @@ use crate::scene::convert::tess_util::FallbackGeometry;
 use crate::scene::model::object::{GripApply, GripDef, GripMenuAction, GripMenuItem, PropSection};
 
 pub trait RenderConvertible {
-    fn to_render(&self, document: &CadDocument) -> Option<RenderEntity>;
+    fn to_render(&self, document: &Document) -> Option<RenderEntity>;
 }
 
 /// Fallback geometry for entities not routed through the render
@@ -81,7 +81,7 @@ pub trait Transformable {
 // Helix, Extended) so every other entity is stored narrow; the boxed ones
 // answer through their contents.
 impl<T: RenderConvertible + ?Sized> RenderConvertible for Box<T> {
-    fn to_render(&self, document: &CadDocument) -> Option<RenderEntity> {
+    fn to_render(&self, document: &Document) -> Option<RenderEntity> {
         (**self).to_render(document)
     }
 }
@@ -175,13 +175,13 @@ pub fn entity_type_name(et: &EntityType) -> &str {
     match et {
         EntityType::Point(_) => "Point",
         EntityType::Line(line)
-            if codec::entities::CenterMarkAssociation::read(&line.common.extended_data)
+            if document::entities::CenterMarkAssociation::read(&line.common.extended_data)
                 .is_some() =>
         {
             "CenterMark"
         }
         EntityType::Line(line)
-            if codec::entities::CenterLineAssociation::read(&line.common.extended_data)
+            if document::entities::CenterLineAssociation::read(&line.common.extended_data)
                 .is_some() =>
         {
             "CenterLine"
@@ -242,7 +242,7 @@ pub fn entity_type_name(et: &EntityType) -> &str {
 }
 
 pub trait EntityTypeOps {
-    fn to_render_entity(&self, document: &CadDocument) -> Option<RenderEntity>;
+    fn to_render_entity(&self, document: &Document) -> Option<RenderEntity>;
     fn grips(&self) -> Vec<GripDef>;
     fn grip_menu(&self, grip_id: usize) -> Vec<GripMenuItem>;
     fn geometry_properties(&self, text_style_names: &[String]) -> Vec<PropSection>;
@@ -359,7 +359,7 @@ macro_rules! impl_entity_basics_with_text_styles {
 }
 
 impl EntityTypeOps for EntityType {
-    fn to_render_entity(&self, document: &CadDocument) -> Option<RenderEntity> {
+    fn to_render_entity(&self, document: &Document) -> Option<RenderEntity> {
         dispatch!(self,
             |e| RenderConvertible::to_render(e, document),
             [
@@ -550,7 +550,7 @@ impl EntityTypeOps for EntityType {
             ],
             _ => {},
         );
-        // XDATA world points follow the entity, as in opencadcodec's
+        // XDATA world points follow the entity, as in document's
         // `EntityType` transforms; the verbatim record would write the old
         // values back. Section marks / view borders stay with their view.
         if !matches!(
@@ -593,9 +593,9 @@ impl EntityTypeOps for EntityType {
 #[cfg(test)]
 mod xdata_transform_tests {
     use super::*;
-    use codec::entities::Insert;
-    use codec::types::Vector3;
-    use codec::xdata::{ExtendedDataRecord, XDataValue};
+    use document::entities::Insert;
+    use document::types::Vector3;
+    use document::xdata::{ExtendedDataRecord, XDataValue};
     use glam::DVec3;
 
     fn insert_with_xdata() -> EntityType {

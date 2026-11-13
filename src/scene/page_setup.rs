@@ -5,8 +5,8 @@
 //! dictionary + objects consistent so the result round-trips through DWG/DXF.
 
 use super::Scene;
-use codec::objects::{Dictionary, Layout, ObjectType, PlotSettings};
-use codec::{CadDocument, Handle};
+use document::objects::{Dictionary, Layout, ObjectType, PlotSettings};
+use document::{Document, Handle};
 
 /// Give a freshly created paper layout the page setup a new drawing starts
 /// with — ISO A4 landscape on no plotter, plotted 1:1 as a layout — stored the
@@ -14,7 +14,7 @@ use codec::{CadDocument, Handle};
 /// name with the orientation in the rotation code. `plot_style` names the
 /// plot style table to attach, or is empty.
 pub fn apply_default_page_setup(layout: &mut Layout, plot_style: &str) {
-    use codec::objects::{PlotPaperUnits, PlotRotation, PlotType, ScaledType};
+    use document::objects::{PlotPaperUnits, PlotRotation, PlotType, ScaledType};
     let a4 = crate::io::paper_catalog::default_paper();
     let (paper_width, paper_height) = a4.portrait_mm();
     layout.min_limits = (0.0, 0.0);
@@ -68,7 +68,7 @@ pub fn rotated_margins(
 /// back to the dictionary that owns the drawing's `PlotSettings` objects,
 /// mirroring [`Scene::scalelist_dict_handle`]. Returns `None` when the
 /// drawing genuinely has no named page setups.
-fn plotsettings_dict_handle_in(document: &CadDocument) -> Option<Handle> {
+fn plotsettings_dict_handle_in(document: &Document) -> Option<Handle> {
     let dh = document.header.acad_plotsettings_dict_handle;
     if matches!(document.objects.get(&dh), Some(ObjectType::Dictionary(_))) {
         return Some(dh);
@@ -87,7 +87,7 @@ fn plotsettings_dict_handle_in(document: &CadDocument) -> Option<Handle> {
 /// The named page setups of any document — `(name, settings)` in dictionary
 /// order. Reads a drawing that is not open in the editor (the source of a
 /// `PSETUPIN` import) the same way the editor reads its own.
-pub fn document_page_setups(document: &CadDocument) -> Vec<(String, PlotSettings)> {
+pub fn document_page_setups(document: &Document) -> Vec<(String, PlotSettings)> {
     let Some(dh) = plotsettings_dict_handle_in(document) else {
         return Vec::new();
     };

@@ -39,9 +39,9 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Instant;
 
-use codec::entities::{Arc as AcadArc, Circle, Ellipse, Line, LwPolyline, LwVertex};
-use codec::types::{Vector2, Vector3};
-use codec::{CadDocument, DxfReader, DxfWriter, EntityType};
+use document::entities::{Arc as AcadArc, Circle, Ellipse, Line, LwPolyline, LwVertex};
+use document::types::{Vector2, Vector3};
+use document::{Document, DxfReader, DxfWriter, EntityType};
 use glam::{DVec3, Mat4, Vec3};
 use iced::{Color, Point, Rectangle};
 
@@ -59,7 +59,7 @@ use OpenCADStudio::scene::{ChangeKind, Scene};
 use OpenCADStudio::snap::Snapper;
 use OpenCADStudio::ui::icons::{self, CHECK};
 use OpenCADStudio::ui::overlay::{
-    grid_segments, selection_overlay, should_reuse, CrosshairOptions, GridCanvasState, GridKey,
+    grid_segments, selection_overlay, CrosshairOptions, GridCanvasState, GridKey,
     GridParams, GridStyle, GripMarker, NavCursor, OstTrackPoint, SelectionVisualOptions,
     UcsIconParams,
 };
@@ -638,7 +638,7 @@ fn bench_dxf_io_throughput(runner: &mut BenchmarkRunner) {
     }
 
     let n_entities = if runner.quick_mode { 1_000 } else { 5_000 };
-    let mut doc = CadDocument::new();
+    let mut doc = Document::new();
 
     for i in 0..n_entities {
         let x = (i % 100) as f64 * 20.0;
@@ -698,7 +698,7 @@ fn bench_dxf_io_throughput(runner: &mut BenchmarkRunner) {
 
     runner.record(
         "dxf_import_parse_throughput",
-        "Parsing DXF stream of 5,000 entities into CadDocument",
+        "Parsing DXF stream of 5,000 entities into Document",
         "ms",
         read_samples,
         Some((read_throughput_mb, "MB/s")),
@@ -797,6 +797,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
             LayerInfo {
                 name: "0".to_string(),
                 color: Color::TRANSPARENT,
+                stored_color: document::types::Color::Index(7),
                 visible: true,
                 frozen: false,
                 locked: false,
@@ -805,6 +806,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
             LayerInfo {
                 name: "DRAWING".to_string(),
                 color: Color::TRANSPARENT,
+                stored_color: document::types::Color::Index(7),
                 visible: true,
                 frozen: false,
                 locked: false,
@@ -813,6 +815,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
             LayerInfo {
                 name: "DIMENSIONS".to_string(),
                 color: Color::TRANSPARENT,
+                stored_color: document::types::Color::Index(7),
                 visible: true,
                 frozen: false,
                 locked: false,
@@ -821,6 +824,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
             LayerInfo {
                 name: "ANNOTATIONS".to_string(),
                 color: Color::TRANSPARENT,
+                stored_color: document::types::Color::Index(7),
                 visible: true,
                 frozen: false,
                 locked: false,
@@ -850,7 +854,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
 
     // Warm-up for allocator and tree settling
     for _ in 0..10 {
-        let _ = black_box(ribbon.view(false, false, 0, 0, false, None));
+        let _ = black_box(ribbon.view(None, false, false, false, 0, 0, false, None));
     }
 
     let n = if runner.quick_mode { 20 } else { 100 };
@@ -860,7 +864,7 @@ fn bench_ui_ribbon_view_construction(runner: &mut BenchmarkRunner) {
     for _ in 0..runs {
         let t0 = Instant::now();
         for _ in 0..n {
-            let elem = ribbon.view(false, false, 0, 0, false, None);
+            let elem = ribbon.view(None, false, false, false, 0, 0, false, None);
             black_box(elem);
         }
         let per_us = (t0.elapsed().as_micros() as f64) / (n as f64);
@@ -1009,21 +1013,43 @@ fn bench_ui_grid_geometry(runner: &mut BenchmarkRunner) {
             limits: limits2,
         };
         let grids = vec![params1, params2];
-        let canvas_bounds = Rectangle {
-            x: 0.0,
-            y: 0.0,
-            width: 1920.0,
-            height: 720.0,
+        // Pane clip rects, as `GridCanvas::draw` derives them from each pane's
+        // bounds intersected with the canvas bounds.
+        let clips = [
+            Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 720.0,
+            },
+            Rectangle {
+                x: 1280.0,
+                y: 0.0,
+                width: 640.0,
+                height: 720.0,
+            },
+        ];
+        let key_for = |pane: usize| {
+            GridKey::from_grids(std::slice::from_ref(&grids[pane]), clips[pane], GridStyle::default())
         };
 
         let state = GridCanvasState::default();
-        let stored_key = GridKey::from_grids(&grids, canvas_bounds, GridStyle::default());
-        *state.key.borrow_mut() = Some(stored_key);
+        for pane in 0..clips.len() {
+            state.store_pane_key(pane, key_for(pane));
+        }
 
+        // The per-frame write path: one key per pane, then one hit decision
+        // per pane. An unchanged pane hits while a changed one misses.
+        let mut changed = grids[0];
+        changed.step_x *= 1.5;
         for _ in 0..50 {
-            let key = GridKey::from_grids(&grids, canvas_bounds, GridStyle::default());
-            let hit = should_reuse(state.key.borrow().as_ref(), &key);
-            black_box(hit);
+            let changed_key = GridKey::from_grids(
+                std::slice::from_ref(&changed),
+                clips[0],
+                GridStyle::default(),
+            );
+            black_box(state.pane_reuses(0, &changed_key));
+            black_box(state.pane_reuses(1, &key_for(1)));
         }
 
         let n = if runner.quick_mode { 1_000 } else { 10_000 };
@@ -1034,16 +1060,25 @@ fn bench_ui_grid_geometry(runner: &mut BenchmarkRunner) {
             let t0 = Instant::now();
             let mut hit_count = 0u32;
             for _ in 0..n {
-                let key = GridKey::from_grids(
-                    black_box(&grids),
-                    black_box(canvas_bounds),
+                let key0 = GridKey::from_grids(
+                    std::slice::from_ref(black_box(&changed)),
+                    black_box(clips[0]),
                     GridStyle::default(),
                 );
-                if should_reuse(state.key.borrow().as_ref(), &key) {
+                let key1 = GridKey::from_grids(
+                    std::slice::from_ref(black_box(&grids[1])),
+                    black_box(clips[1]),
+                    GridStyle::default(),
+                );
+                if state.pane_reuses(0, &key0) {
+                    hit_count += 1;
+                }
+                if state.pane_reuses(1, &key1) {
                     hit_count += 1;
                 }
             }
-            assert_eq!(hit_count as usize, n);
+            // Exactly the unchanged pane hits on every iteration.
+            assert_eq!(hit_count, n);
             let per_ns = (t0.elapsed().as_nanos() as f64) / (n as f64);
             samples.push(per_ns);
         }
@@ -1051,7 +1086,7 @@ fn bench_ui_grid_geometry(runner: &mut BenchmarkRunner) {
         let median_ns = samples[samples.len() / 2];
         runner.record(
             "ui_grid_cache_hit_evaluation",
-            "Grid overlay cache key construction + reuse hit decision",
+            "Per-pane grid overlay key construction + reuse decision (2 panes, 1 changed)",
             "ns",
             samples,
             Some((1_000_000_000.0 / median_ns, "evals/s")),
@@ -1130,11 +1165,11 @@ fn bench_ui_plotstyle_layer_usage(runner: &mut BenchmarkRunner) {
         return;
     }
 
-    let mut doc = CadDocument::new();
+    let mut doc = Document::new();
     for i in 0..200 {
-        let mut layer = codec::tables::Layer::new(&format!("LAYER_{i:03}"));
+        let mut layer = document::tables::Layer::new(&format!("LAYER_{i:03}"));
         layer.handle = doc.allocate_handle();
-        layer.color = codec::types::Color::Index((i % 8 + 1) as u8);
+        layer.color = document::types::Color::Index((i % 8 + 1) as u8);
         let _ = doc.layers.add(layer);
     }
 
@@ -1288,8 +1323,8 @@ fn bench_ui_grip_budget(runner: &mut BenchmarkRunner) {
             axis: None,
         });
     }
-    let all_handles: Vec<codec::Handle> = (0..all_grips.len() as u64)
-        .map(|k| codec::Handle::new(k + 1))
+    let all_handles: Vec<document::Handle> = (0..all_grips.len() as u64)
+        .map(|k| document::Handle::new(k + 1))
         .collect();
     let n_fixture_grips = all_grips.len();
 
@@ -2002,10 +2037,10 @@ fn bench_view_render_viewport_construction(runner: &mut BenchmarkRunner) {
 
     // Populate scene with non-graphical document objects
     for i in 0..obj_count {
-        let handle = codec::Handle::new(0x2000 + i as u64);
+        let handle = document::Handle::new(0x2000 + i as u64);
         scene.document.objects.insert(
             handle,
-            codec::objects::ObjectType::Dictionary(codec::objects::Dictionary::default()),
+            document::objects::ObjectType::Dictionary(document::objects::Dictionary::default()),
         );
     }
     // Add lines to model space
@@ -2033,7 +2068,7 @@ fn bench_view_render_viewport_construction(runner: &mut BenchmarkRunner) {
         let t0 = Instant::now();
         let primitive = scene.build_viewports(
             bounds,
-            codec::entities::ViewportRenderMode::Wireframe2D,
+            document::entities::ViewportRenderMode::Wireframe2D,
             None,
             false,
             false,
@@ -2057,7 +2092,7 @@ fn bench_view_render_viewport_construction(runner: &mut BenchmarkRunner) {
     // 2. Cached / After: Memoized document render environment + O(1) fast paths
     let _ = scene.build_viewports(
         bounds,
-        codec::entities::ViewportRenderMode::Wireframe2D,
+        document::entities::ViewportRenderMode::Wireframe2D,
         None,
         false,
         false,
@@ -2069,7 +2104,7 @@ fn bench_view_render_viewport_construction(runner: &mut BenchmarkRunner) {
         let t0 = Instant::now();
         let primitive = scene.build_viewports(
             bounds,
-            codec::entities::ViewportRenderMode::Wireframe2D,
+            document::entities::ViewportRenderMode::Wireframe2D,
             None,
             false,
             false,
@@ -2124,7 +2159,7 @@ fn bench_navigation_latency_and_coalescing(runner: &mut BenchmarkRunner) {
     // Warm up viewports
     let _ = scene.build_viewports(
         bounds,
-        codec::entities::ViewportRenderMode::Wireframe2D,
+        document::entities::ViewportRenderMode::Wireframe2D,
         None,
         false,
         false,
@@ -2144,7 +2179,7 @@ fn bench_navigation_latency_and_coalescing(runner: &mut BenchmarkRunner) {
             cam.pan_screen(dx, dy, bounds.height);
             let primitive = scene.build_viewports(
                 bounds,
-                codec::entities::ViewportRenderMode::Wireframe2D,
+                document::entities::ViewportRenderMode::Wireframe2D,
                 None,
                 false,
                 false,
@@ -2206,7 +2241,7 @@ fn bench_navigation_latency_and_coalescing(runner: &mut BenchmarkRunner) {
             scene.camera_generation += 1;
             let prim = scene.build_viewports(
                 bounds,
-                codec::entities::ViewportRenderMode::Wireframe2D,
+                document::entities::ViewportRenderMode::Wireframe2D,
                 None,
                 true,
                 true,
@@ -2229,14 +2264,14 @@ fn bench_navigation_latency_and_coalescing(runner: &mut BenchmarkRunner) {
 
     // 4. QuadTree Spatial Index Build
     let n_tree_items = if runner.quick_mode { 2_000 } else { 100_000 };
-    let tree_items: Vec<(codec::Handle, [f64; 4])> = (0..n_tree_items)
+    let tree_items: Vec<(document::Handle, [f64; 4])> = (0..n_tree_items)
         .map(|i| {
             // Clustered distribution: 80% of entities share tight bounding clusters
             let cluster = (i % 10) as f64 * 50.0;
             let offset = (i as f64 * 0.05) % 10.0;
             let x = cluster + offset;
             let y = cluster + offset;
-            (codec::Handle::from(i as u64), [x, y, x + 5.0, y + 5.0])
+            (document::Handle::from(i as u64), [x, y, x + 5.0, y + 5.0])
         })
         .collect();
     let tree_bounds = [0.0, 0.0, 1000.0, 1000.0];

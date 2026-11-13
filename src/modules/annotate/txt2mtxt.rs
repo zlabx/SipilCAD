@@ -9,11 +9,11 @@
 //! starts a paragraph; unless line spacing is forced uniform, each paragraph
 //! keeps its own pitch (`\pxsm` / `\psm`). A height change starts `\H<h>;`.
 
-use codec::entities::{
+use document::entities::{
     AttachmentPoint, DrawingDirection, LineSpacingStyle, MText, TextHorizontalAlignment as HA,
 };
-use codec::types::Vector3;
-use codec::{CadDocument, EntityType, Handle};
+use document::types::Vector3;
+use document::{Document, EntityType, Handle};
 
 use crate::app::settings::Txt2MtxtSettings;
 use crate::entities::text_support::{resolve_dxf_special_chars, text_local_bounds};
@@ -121,7 +121,7 @@ fn text_content(value: &str) -> String {
     out
 }
 
-fn piece<'a>(handle: Handle, entity: &'a EntityType, doc: &CadDocument) -> Option<Piece<'a>> {
+fn piece<'a>(handle: Handle, entity: &'a EntityType, doc: &Document) -> Option<Piece<'a>> {
     match entity {
         EntityType::Text(t) => {
             let p = crate::entities::text::text_run_placement_at_scale(t, doc, 1.0);
@@ -214,7 +214,7 @@ fn mtext_from(source: &EntityType, value: String, at: [f64; 2], height: f64, rot
 
 /// Each TEXT and each line of an MTEXT as an MTEXT of its own. A TEXT keeps
 /// its horizontal justification as a top attachment.
-fn separate(p: &Piece, doc: &CadDocument) -> Vec<EntityType> {
+fn separate(p: &Piece, doc: &Document) -> Vec<EntityType> {
     match p.entity {
         EntityType::Text(t) => {
             let (x, attachment) = match t.horizontal_alignment {
@@ -231,7 +231,7 @@ fn separate(p: &Piece, doc: &CadDocument) -> Vec<EntityType> {
             // The drawn words, grouped into lines by their baseline.
             // ponytail: a line keeps only its words, not inline formatting.
             let words = crate::entities::mtext::explode_mtext(m, doc);
-            let mut lines: Vec<(f64, Vec<(f64, &codec::entities::Text)>)> = Vec::new();
+            let mut lines: Vec<(f64, Vec<(f64, &document::entities::Text)>)> = Vec::new();
             for word in &words {
                 let EntityType::Text(t) = word else { continue };
                 let at = [t.insertion_point.x, t.insertion_point.y];
@@ -277,7 +277,7 @@ fn separate(p: &Piece, doc: &CadDocument) -> Vec<EntityType> {
 /// text.
 pub fn plan(
     selected: &[(Handle, &EntityType)],
-    doc: &CadDocument,
+    doc: &Document,
     settings: Txt2MtxtSettings,
 ) -> Option<Txt2MtxtPlan> {
     let mut pieces: Vec<Piece> = selected

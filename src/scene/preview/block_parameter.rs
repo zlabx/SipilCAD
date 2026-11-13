@@ -5,7 +5,7 @@ impl Scene {
     /// or representation in the resident scene/cache.
     pub(crate) fn reference_document_preview(
         &self,
-        document: &CadDocument,
+        document: &Document,
         handle: Handle,
     ) -> Option<(Vec<WireModel>, Vec<HatchModel>)> {
         let entity @ EntityType::Insert(insert) = document.get_entity(handle)? else {
@@ -34,7 +34,7 @@ impl Scene {
             Some(&cache),
             None,
             None,
-            paper,
+            paper.then_some(1.0),
             self.reference_only.handles(),
         );
         let frozen: rustc_hash::FxHashSet<Handle> = self

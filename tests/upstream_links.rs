@@ -22,6 +22,10 @@ use std::path::{Path, PathBuf};
 /// `mcp.rs` dan `mcp_ops.rs` tidak dikompilasi untuk web, `dwf.rs` memakainya sebagai namespace XML.
 /// `x` (ditinjau untuk v2026.42) hanya string uji `https://x` di `src/io/web_link.rs` (tautan dalam `?file=`: yang
 /// diambil URL dari pengguna, tanpa host bawaan).
+/// Ditinjau untuk v2026.45: `schemas.openxmlformats.org` hanya namespace XML di `src/app/annotation_data.rs`;
+/// `www.opencadstudio.com` adalah `DOWNLOAD_PAGE` di `src/io/update_check.rs` (situs upstream, dibuka lewat
+/// `open_url` dari notifikasi update). Cek update mati di build ini (`HIDE_UPSTREAM_LINKS`) dan `open_url`
+/// memblokirnya lewat `BLOCKED_URL_PARTS` (`opencadstudio.com`) di `src/sipil.rs`.
 const KNOWN_HOSTS: &[&str] = &[
     "127.0.0.1",
     "3dconnexion.com",
@@ -40,9 +44,11 @@ const KNOWN_HOSTS: &[&str] = &[
     "patreon.com",
     "raw.githubusercontent.com",
     "schemas.microsoft.com",
+    "schemas.openxmlformats.org",
     "server",
     "sipilstock.com",
     "www.freedesktop.org",
+    "www.opencadstudio.com",
     "www.patreon.com",
     "www.reddit.com",
     "www.w3.org",

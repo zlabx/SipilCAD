@@ -10,7 +10,7 @@ use crate::ui::dock::PanelId;
 use crate::ui::style::common::muted_style;
 use crate::ui::style::form::{button_style, dialog_button, field_style};
 use crate::ui::window::pdf_dialogs::{accent_text, card_style};
-use codec::sheet_set::{self as ss, ComponentKind, Element as SsElement, SheetSetDatabase};
+use document::sheet_set::{self as ss, ComponentKind, Element as SsElement, SheetSetDatabase};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, pick_list, row, scrollable, text, text_input,
     Space,
@@ -103,7 +103,7 @@ pub struct SheetSetManager {
 pub struct DrawingCache(
     pub  std::collections::HashMap<
         String,
-        (std::time::SystemTime, std::sync::Arc<codec::CadDocument>),
+        (std::time::SystemTime, std::sync::Arc<document::Document>),
     >,
 );
 
@@ -115,7 +115,7 @@ impl std::fmt::Debug for DrawingCache {
 
 impl DrawingCache {
     /// The drawing at `path` when it was read and is unchanged since.
-    pub fn get(&self, path: &str) -> Option<std::sync::Arc<codec::CadDocument>> {
+    pub fn get(&self, path: &str) -> Option<std::sync::Arc<document::Document>> {
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
         let (t, doc) = self.0.get(&ss::path_key(path))?;
         (*t == modified).then(|| doc.clone())
@@ -125,7 +125,7 @@ impl DrawingCache {
         &mut self,
         path: &str,
         modified: std::time::SystemTime,
-        doc: std::sync::Arc<codec::CadDocument>,
+        doc: std::sync::Arc<document::Document>,
     ) {
         self.0.insert(ss::path_key(path), (modified, doc));
     }
@@ -135,7 +135,7 @@ impl DrawingCache {
     pub fn take(
         &mut self,
         path: &str,
-    ) -> Option<(std::time::SystemTime, std::sync::Arc<codec::CadDocument>)> {
+    ) -> Option<(std::time::SystemTime, std::sync::Arc<document::Document>)> {
         self.0.remove(&ss::path_key(path))
     }
 }
@@ -143,7 +143,7 @@ impl DrawingCache {
 /// A drawing read for the cache (its modification time and document).
 #[derive(Clone)]
 pub struct ReadDrawing(
-    pub Result<(std::time::SystemTime, std::sync::Arc<codec::CadDocument>), String>,
+    pub Result<(std::time::SystemTime, std::sync::Arc<document::Document>), String>,
 );
 
 impl std::fmt::Debug for ReadDrawing {
@@ -172,7 +172,7 @@ pub fn read_drawing(path: &str) -> ReadDrawing {
 pub type ImportRead = Result<
     (
         Vec<(String, String)>,
-        Option<codec::sheet_set::SheetSetData>,
+        Option<document::sheet_set::SheetSetData>,
     ),
     String,
 >;
@@ -634,7 +634,7 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
     let mut items = Vec::new();
     match kind {
         ComponentKind::SheetSet => items.extend([
-            entry("Close Project", MenuAction::Close, true),
+            entry("Close Sheet Set", MenuAction::Close, true),
             menu_separator(),
         ]),
         ComponentKind::Sheet => {
@@ -642,12 +642,12 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
         }
         ComponentKind::Subset => {}
     }
-    items.push(entry("New Drawing...", MenuAction::NewSheet, true));
+    items.push(entry("New Sheet...", MenuAction::NewSheet, true));
     if kind != ComponentKind::Sheet {
-        items.push(entry("Add Category...", MenuAction::NewSubset, true));
+        items.push(entry("New Subset...", MenuAction::NewSubset, true));
     }
     items.push(entry(
-        "Add Drawing (DWG)...",
+        "Import Layout as Sheet...",
         MenuAction::ImportLayout,
         true,
     ));
@@ -655,13 +655,13 @@ fn row_menu(id: String, kind: ComponentKind, empty: bool) -> Element<'static, Me
         ComponentKind::SheetSet => {}
         ComponentKind::Subset => items.extend([
             menu_separator(),
-            entry("Rename Category...", MenuAction::Properties, true),
-            entry("Remove Category", MenuAction::Remove, empty),
+            entry("Rename Subset...", MenuAction::Properties, true),
+            entry("Remove Subset", MenuAction::Remove, empty),
         ]),
         ComponentKind::Sheet => items.extend([
             menu_separator(),
             entry("Rename & Renumber...", MenuAction::Rename, true),
-            entry("Remove Drawing", MenuAction::Remove, true),
+            entry("Remove Sheet", MenuAction::Remove, true),
         ]),
     }
     items.push(menu_separator());
@@ -1306,7 +1306,7 @@ pub fn view<'a>(
         .style(muted_style);
     crate::ui::dock::frame(
         title_bar,
-        column![combo, tabs, card, crate::sipil_project::ui::panel_buttons(), hint].spacing(6),
+        column![combo, tabs, card, hint].spacing(6),
         width,
     )
 }

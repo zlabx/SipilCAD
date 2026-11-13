@@ -2,11 +2,11 @@
 pub(crate) mod graph;
 pub(crate) mod edit;
 pub(crate) mod metadata;
-use codec::objects::{
+use document::objects::{
     BlockEvalExpression, BlockEvalValue, DynamicBlockData, DynamicBlockObject, ObjectType,
 };
-use codec::xdata::{ExtendedDataRecord, XDataValue};
-use codec::{CadDocument, EntityType, Handle};
+use document::xdata::{ExtendedDataRecord, XDataValue};
+use document::{Document, EntityType, Handle};
 
 pub(super) const MAJOR: i32 = 33;
 pub(super) const MINOR: i32 = 329;
@@ -38,12 +38,12 @@ static PUBLISHED: std::sync::RwLock<PublishedOwners> = std::sync::RwLock::new(Ve
 /// then answers "none" for an unowned block straight away, on any thread.
 pub(crate) struct DictionaryOwners<'a> {
     address: usize,
-    _document: std::marker::PhantomData<&'a CadDocument>,
+    _document: std::marker::PhantomData<&'a Document>,
 }
 
 impl<'a> DictionaryOwners<'a> {
-    pub(crate) fn publish(document: &'a CadDocument) -> Self {
-        let address = document as *const CadDocument as usize;
+    pub(crate) fn publish(document: &'a Document) -> Self {
+        let address = document as *const Document as usize;
         let mut published = PUBLISHED.write().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = published.iter_mut().find(|entry| entry.0 == address) {
             entry.1 += 1;
@@ -78,10 +78,10 @@ impl Drop for DictionaryOwners<'_> {
 }
 
 /// A block definition's extension dictionary. Skips the whole-document scan
-/// [`CadDocument::extension_dictionary_handle`] falls back to when the
+/// [`Document::extension_dictionary_handle`] falls back to when the
 /// document's dictionary owners are published and none is `definition`.
-pub(crate) fn definition_dictionary(document: &CadDocument, definition: Handle) -> Option<Handle> {
-    let address = document as *const CadDocument as usize;
+pub(crate) fn definition_dictionary(document: &Document, definition: Handle) -> Option<Handle> {
+    let address = document as *const Document as usize;
     let unowned = PUBLISHED
         .read()
         .unwrap_or_else(|e| e.into_inner())
@@ -94,10 +94,34 @@ pub(crate) fn definition_dictionary(document: &CadDocument, definition: Handle) 
     document.extension_dictionary_handle(definition)
 }
 
+/// The definition's graph as a list needs it: the authoring object its own
+/// extension dictionary names, without the checks that decide whether the graph
+/// can be edited. A definition whose graph will not take an edit still holds the
+/// parameters that hang off the graph itself — its lookup and visibility ones —
+/// and listing those cannot wait on the checks. The links between the definition,
+/// its dictionary and the graph are still required: they are what keeps another
+/// definition's parameters off this list.
+pub(super) fn listed_graph(document: &Document, definition: Handle) -> Option<Handle> {
+    let dictionary = definition_dictionary(document, definition)?;
+    let ObjectType::Dictionary(record) = document.objects.get(&dictionary)? else {
+        return None;
+    };
+    let handle = record.get("ACAD_ENHANCEDBLOCK")?;
+    match document.objects.get(&handle) {
+        Some(ObjectType::DynamicBlock(object))
+            if object.owner == dictionary
+                && matches!(object.data, DynamicBlockData::EvaluationGraph(_)) =>
+        {
+            Some(handle)
+        }
+        _ => None,
+    }
+}
+
 /// Resolve a graph without touching it. Reject malformed/opaque relationships
 /// before opening a history transaction or allocating any new native objects.
 pub(super) fn graph(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
 ) -> Result<Option<Handle>, &'static str> {
     if !document
@@ -145,7 +169,7 @@ pub(super) fn graph(
     Ok(Some(handle))
 }
 
-fn slots(graph: Option<&codec::objects::BlockEvaluationGraph>) -> Result<Slots, &'static str> {
+fn slots(graph: Option<&document::objects::BlockEvaluationGraph>) -> Result<Slots, &'static str> {
     let node = graph
         .and_then(|graph| graph.nodes.iter().map(|node| node.id).max())
         .unwrap_or(-1)
@@ -182,7 +206,7 @@ fn slots(graph: Option<&codec::objects::BlockEvaluationGraph>) -> Result<Slots, 
 /// Prepare an existing graph for appending, or create the native graph and
 /// definition metadata once. Existing nodes, edges, GUIDs and relationships stay.
 pub(super) fn prepare(
-    document: &mut CadDocument,
+    document: &mut Document,
     definition: Handle,
 ) -> Result<(Handle, Slots), &'static str> {
     if let Some(handle) = graph(document, definition)? {
@@ -234,7 +258,7 @@ pub(super) fn prepare(
         dictionary,
         "ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION",
         "AcDbDynamicBlockPurgePreventer",
-        DynamicBlockData::Representation(codec::objects::BlockRepresentationData {
+        DynamicBlockData::Representation(document::objects::BlockRepresentationData {
             flags: 1,
             block: definition,
         }),
@@ -259,7 +283,7 @@ pub(super) fn prepare(
 
 /// Preflight the larger subgraph needed by parameters with state expressions.
 pub(super) fn capacity(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
     nodes: i32,
     edges: i32,
@@ -285,7 +309,7 @@ pub(super) fn capacity(
 /// parameters and two-point parameters configured with one end grip.
 /// Graph node IDs, expression IDs and edge IDs are separate namespaces.
 pub(super) fn append(
-    document: &mut CadDocument,
+    document: &mut Document,
     handle: Handle,
     slots: Slots,
     expressions: [Handle; 4],
@@ -295,7 +319,7 @@ pub(super) fn append(
 
 /// Basepoint parameters and action objects can be standalone expressions.
 pub(super) fn append_single(
-    document: &mut CadDocument,
+    document: &mut Document,
     handle: Handle,
     slots: Slots,
     expression: Handle,
@@ -306,7 +330,7 @@ pub(super) fn append_single(
     let DynamicBlockData::EvaluationGraph(graph) = &mut object.data else {
         unreachable!()
     };
-    graph.nodes.push(codec::objects::BlockEvaluationNode {
+    graph.nodes.push(document::objects::BlockEvaluationNode {
         id: slots.node,
         next_id: slots.eval,
         expression,
@@ -321,13 +345,13 @@ pub(super) fn append_single(
 /// Append a parameter and grip, followed by its location/state expressions.
 /// `components` gives the expression offsets in native dependency order.
 pub(super) fn append_components(
-    document: &mut CadDocument,
+    document: &mut Document,
     handle: Handle,
     slots: Slots,
     expressions: &[Handle],
     components: &[usize],
 ) {
-    use codec::objects::{BlockEvaluationEdge, BlockEvaluationNode};
+    use document::objects::{BlockEvaluationEdge, BlockEvaluationNode};
     let ObjectType::DynamicBlock(object) = document.objects.get_mut(&handle).unwrap() else {
         unreachable!()
     };
@@ -384,19 +408,19 @@ pub(super) fn append_components(
     graph.first_node_id_copy = graph.first_node_id;
 }
 
-pub(super) fn register_classes(document: &mut CadDocument, classes: &[(&str, &str, i32)]) {
+pub(super) fn register_classes(document: &mut Document, classes: &[(&str, &str, i32)]) {
     for &(dxf_name, cpp_class_name, maintenance_version) in classes {
         if let Some(existing) = document.classes.get_mut_by_name(dxf_name) {
-            existing.proxy_flags = codec::classes::ProxyFlags(1153);
+            existing.proxy_flags = document::classes::ProxyFlags(1153);
             existing.dwg_version = 25;
             existing.maintenance_version = maintenance_version;
             continue;
         }
-        document.classes.add_or_update(codec::classes::DxfClass {
+        document.classes.add_or_update(document::classes::DxfClass {
             dxf_name: dxf_name.to_string(),
             cpp_class_name: cpp_class_name.to_string(),
             application_name: "ObjectDBX Classes".to_string(),
-            proxy_flags: codec::classes::ProxyFlags(1153),
+            proxy_flags: document::classes::ProxyFlags(1153),
             instance_count: 0,
             was_zombie: false,
             is_an_entity: false,
@@ -410,9 +434,9 @@ pub(super) fn register_classes(document: &mut CadDocument, classes: &[(&str, &st
     }
 }
 
-pub(super) fn ensure_app_id(document: &mut CadDocument, name: &str) {
+pub(super) fn ensure_app_id(document: &mut Document, name: &str) {
     if !document.app_ids.contains(name) {
-        let mut app = codec::tables::AppId::new(name);
+        let mut app = document::tables::AppId::new(name);
         app.handle = document.allocate_handle();
         let _ = document.app_ids.add(app);
     }
@@ -453,9 +477,9 @@ pub(super) fn dynamic(
 /// whole graph, parameters and actions included; leave those two behind
 /// instead.
 pub(crate) fn export_graph(
-    document: &CadDocument,
+    document: &Document,
     definition: Handle,
-) -> Option<codec::BlockGraph> {
+) -> Option<document::BlockGraph> {
     if let Some(graph) = document.export_block_graph(definition) {
         return Some(graph);
     }
@@ -491,7 +515,7 @@ pub(crate) fn export_graph(
     document.export_block_graph(definition)
 }
 
-pub(crate) fn members(document: &CadDocument, definition: Handle) -> Vec<Handle> {
+pub(crate) fn members(document: &Document, definition: Handle) -> Vec<Handle> {
     document
         .block_records
         .iter()
@@ -534,7 +558,7 @@ pub(super) fn element_id(entity: &EntityType) -> Option<i32> {
 }
 
 pub(super) fn set_entity_tag(
-    document: &mut CadDocument,
+    document: &mut Document,
     handle: Handle,
     record: ExtendedDataRecord,
 ) {
@@ -554,7 +578,7 @@ pub(super) fn set_entity_tag(
 
 /// Point each tagged member's element tag back at the member itself, after
 /// the definition was copied onto new handles.
-pub(crate) fn retag_members(document: &mut CadDocument, definition: Handle) {
+pub(crate) fn retag_members(document: &mut Document, definition: Handle) {
     for handle in members(document, definition) {
         if let Some(id) = document.get_entity(handle).and_then(element_id) {
             let tagged = document.get_entity(handle).is_some_and(|entity| {
@@ -578,7 +602,7 @@ pub(crate) fn retag_members(document: &mut CadDocument, definition: Handle) {
 }
 
 /// A copied definition owns its identity even when its evaluation IDs are retained.
-pub(crate) fn refresh_copied_identity(document: &mut CadDocument, definition: Handle, name: &str) {
+pub(crate) fn refresh_copied_identity(document: &mut Document, definition: Handle, name: &str) {
     if !matches!(graph(document, definition), Ok(Some(_))) {
         return;
     }
@@ -593,7 +617,7 @@ pub(crate) fn refresh_copied_identity(document: &mut CadDocument, definition: Ha
 
 /// Give every object of the definition its element tag, numbering the new
 /// ones after the highest id in use, and record the next id on the block.
-pub(super) fn tag_members(document: &mut CadDocument, definition: Handle) {
+pub(super) fn tag_members(document: &mut Document, definition: Handle) {
     let members = members(document, definition);
     let stored_next = document
         .object_xdata(definition)

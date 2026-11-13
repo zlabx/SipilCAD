@@ -4,22 +4,22 @@
 // is silently lost, which is exactly why the row was kept read-only before.
 // This is the regression guard for that persistence.
 
-use codec::entities::{Dimension, DimensionLinear, Leader, Line};
-use codec::tables::BlockRecord;
-use codec::types::{Color, Vector3};
-use codec::xdata::XDataValue;
-use codec::{CadDocument, EntityType, Handle};
+use document::entities::{Dimension, DimensionLinear, Leader, Line};
+use document::tables::BlockRecord;
+use document::types::{Color, Vector3};
+use document::xdata::XDataValue;
+use document::{Document, EntityType, Handle};
 use OpenCADStudio::entities::dim_override as dov;
 use OpenCADStudio::scene::Scene;
 
-fn roundtrip(doc: &CadDocument, ext: &str) -> CadDocument {
+fn roundtrip(doc: &Document, ext: &str) -> Document {
     let bytes = OpenCADStudio::io::save_to_bytes(doc, ext, doc.version)
         .unwrap_or_else(|e| panic!("save to {ext}: {e}"));
     OpenCADStudio::io::load_bytes(&format!("rt.{ext}"), bytes)
         .unwrap_or_else(|e| panic!("reload {ext}: {e}"))
 }
 
-fn leader_color(doc: &CadDocument) -> Option<Color> {
+fn leader_color(doc: &Document) -> Option<Color> {
     doc.entities()
         .find_map(|e| match e {
             EntityType::Leader(l) => Some(dov::color(&l.common.extended_data, dov::DIMCLRD)),
@@ -28,7 +28,7 @@ fn leader_color(doc: &CadDocument) -> Option<Color> {
         .flatten()
 }
 
-fn dim_color(doc: &CadDocument) -> Option<Color> {
+fn dim_color(doc: &Document) -> Option<Color> {
     doc.entities()
         .find_map(|e| match e {
             EntityType::Dimension(d) => {

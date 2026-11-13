@@ -5,9 +5,9 @@ use crate::app::control::text_ops::decode_dxf_escapes;
 use crate::app::OpenCADStudio;
 use crate::scene::block_authoring::{definition_dictionary, DictionaryOwners};
 use crate::scene::model::object::PropValue;
-use codec::objects::{DynamicBlockData, ObjectType};
-use codec::xdata::XDataValue;
-use codec::{CadDocument, EntityType, Handle};
+use document::objects::{DynamicBlockData, ObjectType};
+use document::xdata::XDataValue;
+use document::{Document, EntityType, Handle};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{json, Map, Value};
 
@@ -29,7 +29,7 @@ fn entity_element_id(entity: &EntityType) -> Option<i32> {
 }
 
 fn resolve_visibility_state(
-    doc: &CadDocument,
+    doc: &Document,
     block_members: &FxHashMap<Handle, Vec<Handle>>,
     insert_handle: Handle,
     effective_def: Option<Handle>,
@@ -106,7 +106,7 @@ fn resolve_visibility_state(
 }
 
 /// Precomputed block definition membership map (`BlockRecord` handle -> member entity handles).
-pub(crate) fn build_block_members_map(doc: &CadDocument) -> FxHashMap<Handle, Vec<Handle>> {
+pub(crate) fn build_block_members_map(doc: &Document) -> FxHashMap<Handle, Vec<Handle>> {
     let mut layouts: FxHashSet<Handle> = doc
         .objects
         .values()
@@ -162,15 +162,15 @@ pub(crate) fn build_block_members_map(doc: &CadDocument) -> FxHashMap<Handle, Ve
 /// Resolve an `Insert` entity's effective block name, effective definition `BlockRecord` handle,
 /// and evaluated representation `BlockRecord` handle (e.g. `*U12`).
 pub(crate) fn resolve_effective_block(
-    doc: &CadDocument,
-    insert: &codec::entities::Insert,
+    doc: &Document,
+    insert: &document::entities::Insert,
 ) -> (String, Option<Handle>, Option<Handle>) {
     let insert_handle = insert.common.handle;
     let raw_name = &insert.block_name;
     let evaluated_record = crate::scene::render_graph::block_record_by_name(doc, raw_name);
     let evaluated_handle = evaluated_record.map(|r| r.handle);
 
-    // 1. Standard dynamic block resolution via CadDocument
+    // 1. Standard dynamic block resolution via Document
     let mut def_handle = doc.dynamic_definition_for_insert(insert_handle);
 
     // 2. Fallback: check AcDbBlockRepBTag on the Insert's XData
@@ -283,6 +283,62 @@ pub(crate) fn resolve_effective_block(
     (raw_name.clone(), evaluated_handle, evaluated_handle)
 }
 
+/// Drop the evaluated-copy link an INSERT carries, so it resolves through the
+/// block record its name points at again. Both readers rebuild the link from
+/// the representation-data objects reachable through the insert's extension
+/// dictionary, so the link has to leave the drawing as well as the in-memory
+/// resolution map; the insert's own copy of the reference tag goes too. The
+/// rest of the extension data is left alone.
+pub(crate) fn detach_representation(doc: &mut Document, insert: Handle) {
+    let app = doc
+        .app_ids
+        .get(REPRESENTATION_TAG)
+        .map(|app| app.handle.value());
+    if let Some(EntityType::Insert(reference)) = doc.get_entity_mut(insert) {
+        reference
+            .common
+            .extended_data
+            .remove_record(REPRESENTATION_TAG);
+        if let Some(app) = app {
+            reference
+                .common
+                .extended_data
+                .raw_dwg_eed
+                .retain(|(owner, _)| *owner != app);
+        }
+    }
+    let Some(holder) = doc.extension_dictionary_handle(insert) else {
+        return;
+    };
+    let link = match doc.objects.get(&holder) {
+        Some(ObjectType::Dictionary(dictionary)) => dictionary
+            .entries
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("AcDbBlockRepresentation"))
+            .map(|(_, handle)| *handle),
+        _ => None,
+    };
+    if let Some(link) = link {
+        let owned: Vec<Handle> = doc
+            .objects
+            .keys()
+            .copied()
+            .filter(|handle| *handle != link && doc.owner_chain_reaches(*handle, link))
+            .collect();
+        for handle in owned {
+            doc.block_representations.remove(&handle);
+            doc.objects.remove(&handle);
+        }
+        doc.block_representations.remove(&link);
+        doc.objects.remove(&link);
+        if let Some(ObjectType::Dictionary(dictionary)) = doc.objects.get_mut(&holder) {
+            dictionary
+                .entries
+                .retain(|(key, _)| !key.eq_ignore_ascii_case("AcDbBlockRepresentation"));
+        }
+    }
+}
+
 /// Case-insensitive wildcard glob matcher supporting `*` and `?`.
 pub(crate) fn glob_match_ci(pattern: &str, text: &str) -> bool {
     if pattern == "*" {
@@ -321,7 +377,7 @@ pub(crate) fn glob_match_ci(pattern: &str, text: &str) -> bool {
 
 fn clean_text(raw: &str, is_mtext: bool) -> String {
     let base = if is_mtext {
-        codec::entities::mtext_format::parse_mtext(raw, true).to_plain_text()
+        document::entities::mtext_format::parse_mtext(raw, true).to_plain_text()
     } else {
         raw.replace("\\P", "\n").replace("\\p", "\n")
     };
@@ -419,7 +475,7 @@ fn is_valid_key_value_pair(line: &str) -> Option<(String, String)> {
 }
 
 fn collect_definition_texts_and_nested_attrs(
-    doc: &CadDocument,
+    doc: &Document,
     block_members: &FxHashMap<Handle, Vec<Handle>>,
     def_handle: Handle,
     depth: u8,
@@ -489,9 +545,9 @@ fn collect_definition_texts_and_nested_attrs(
 /// Extract attributes (`ATTRIB` on insert, `ATTDEF` defaults, and static `TEXT`/`MTEXT` schedule tags)
 /// for a block reference.
 pub(crate) fn extract_block_attributes(
-    doc: &CadDocument,
+    doc: &Document,
     block_members: &FxHashMap<Handle, Vec<Handle>>,
-    insert: &codec::entities::Insert,
+    insert: &document::entities::Insert,
     effective_def: Option<Handle>,
     evaluated_def: Option<Handle>,
 ) -> Map<String, Value> {
@@ -629,9 +685,9 @@ fn clean_float(v: f64) -> f64 {
 
 /// Compute world XY bounds for an `Insert` by transforming its visible block definition members.
 fn insert_world_xy_bounds(
-    doc: &CadDocument,
+    doc: &Document,
     block_members: &FxHashMap<Handle, Vec<Handle>>,
-    insert: &codec::entities::Insert,
+    insert: &document::entities::Insert,
     active_def: Option<Handle>,
 ) -> ([f64; 2], [f64; 2]) {
     let mut min_x = insert.insert_point.x;
@@ -682,7 +738,7 @@ fn insert_world_xy_bounds(
             (emax[0], emin[1]),
             (emax[0], emax[1]),
         ] {
-            let wp = transform.apply(codec::types::Vector3::new(px, py, 0.0));
+            let wp = transform.apply(document::types::Vector3::new(px, py, 0.0));
             if wp.x.is_finite() && wp.y.is_finite() {
                 any_member = true;
                 b_min_x = b_min_x.min(wp.x);
@@ -707,7 +763,7 @@ impl OpenCADStudio {
     /// Extract dynamic block properties (parameters, visibility state, lookup choice) for an `Insert`.
     pub(crate) fn extract_dynamic_properties(
         &self,
-        doc: &CadDocument,
+        doc: &Document,
         block_members: &FxHashMap<Handle, Vec<Handle>>,
         tab_id: u64,
         insert_handle: Handle,
@@ -725,7 +781,8 @@ impl OpenCADStudio {
         {
             match prop.value {
                 PropValue::BlockNumber { value, .. } => {
-                    if let Ok(num) = value.parse::<f64>() {
+                    if let Some(num) = crate::app::block_parameter_properties::parse_value(&value)
+                    {
                         dyn_props.insert(prop.label, json!(clean_float(num)));
                     } else {
                         dyn_props.insert(prop.label, json!(value));
@@ -734,9 +791,14 @@ impl OpenCADStudio {
                 PropValue::BlockChoice {
                     selected, options, ..
                 } => {
-                    if let Some(opt) = options.get(selected) {
-                        dyn_props.insert(prop.label, json!(opt));
-                    }
+                    // A row that matches nothing stays in the panel as a
+                    // choice without a current option, so it stays here too:
+                    // `null` means present and unmatched, a missing key means
+                    // the definition has no such property.
+                    dyn_props.insert(
+                        prop.label,
+                        options.get(selected).map_or(Value::Null, |opt| json!(opt)),
+                    );
                 }
                 PropValue::Choice { selected, .. } | PropValue::ChoiceWithTooltip { selected, .. } => {
                     dyn_props.insert(prop.label, json!(selected));
@@ -829,10 +891,16 @@ impl OpenCADStudio {
             .iter()
             .any(|p| p.starts_with('*') && p.len() > 1 && p.chars().nth(1) != Some('*'));
 
-        let scope = req
-            .get("scope")
-            .and_then(Value::as_str)
-            .unwrap_or("active_space");
+        // A block-editing session makes the definition the active space, so
+        // the default scope would report only the inserts nested inside it.
+        // An unscoped read during a session answers for the whole document.
+        let scope = req.get("scope").and_then(Value::as_str).unwrap_or(
+            if tab.active_block_edit.is_some() {
+                "all"
+            } else {
+                "active_space"
+            },
+        );
         let layer_filter = req.get("layer").and_then(Value::as_str);
 
         let handles_filter: Option<FxHashSet<Handle>> = if let Some(h) = req["handle"].as_str() {
@@ -1072,8 +1140,8 @@ impl OpenCADStudio {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codec::entities::{AttributeDefinition, AttributeEntity, Circle, Insert, Line, Text};
-    use codec::types::Vector3;
+    use document::entities::{AttributeDefinition, AttributeEntity, Circle, Insert, Line, Text};
+    use document::types::Vector3;
 
     #[test]
     fn extracts_schedule_tags_attributes_dynamic_properties_and_filters_anonymous_blocks() {

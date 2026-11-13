@@ -10,9 +10,23 @@ struct Uniforms {
     eye_high: vec3<f32>,
     highlight_widen: f32,
     eye_low: vec3<f32>,
-    _pad_el: f32,
+    edge_rgb: f32,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
+
+// Edge colour of the filled-with-edges modes: 0x01RRGGBB in the bits of
+// `edge_rgb` picks that colour, anything else black.
+fn edge_color() -> vec3<f32> {
+    let bits = bitcast<u32>(u.edge_rgb);
+    if (bits >> 24u) != 1u {
+        return vec3<f32>(0.0);
+    }
+    return vec3<f32>(
+        f32((bits >> 16u) & 255u),
+        f32((bits >> 8u) & 255u),
+        f32(bits & 255u),
+    ) / 255.0;
+}
 
 struct WireConst {
     color: vec4<f32>,
@@ -21,7 +35,7 @@ struct WireConst {
     half_width: f32,
     pattern_length: f32,
     draw_depth: f32,
-    align_end: f32,
+    _reserved: f32,
     align_total: f32,
     world_half_width: f32,
     is_tapered: f32,
@@ -38,7 +52,7 @@ struct VertexIn {
     @location(2) pos_a_low: vec3<f32>,
     @location(3) pos_b_low: vec3<f32>,
     @location(4) distances: vec2<f32>,
-    @location(5) taper_ratio: vec2<f32>,
+    @location(5) taper_bits: vec2<i32>,
     @location(6) translation: vec3<f32>,
     @location(7) translation_low: vec3<f32>,
     @location(8) depth: vec2<f32>,
@@ -97,12 +111,12 @@ fn marker_relative(
     translation_low: vec3<f32>,
 ) -> vec3<f32> {
     if wire_const.marker_normal_scale.w <= 0.0 {
-        return (position_high + translation - u.eye_high)
+        return (position_high - u.eye_high + translation)
             + (position_low + translation_low - u.eye_low);
     }
     let origin_high = wire_const.marker_origin_high.xyz;
     let origin_low = wire_const.marker_origin_low.xyz;
-    let origin_relative = (origin_high + translation - u.eye_high)
+    let origin_relative = (origin_high - u.eye_high + translation)
         + (origin_low + translation_low - u.eye_low);
     let delta = (position_high - origin_high) + (position_low - origin_low);
     let normal = normalize(wire_const.marker_normal_scale.xyz);
@@ -137,16 +151,17 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, in: VertexIn) -> VertexOut 
     var out_cap: vec2<f32>;
     var out_cap_ends: vec3<f32>;
 
+    let taper_ratio = vec2<f32>(in.taper_bits) / 32767.0;
     if is_world {
         // Wide polylines have physical world-unit width (world_half_width or taper > 0).
         // Expand the quad in 3D world space on the entity's plane (perpendicular to
         // the segment and the plane normal), so the rectangle remains hosted rigidly
         // on the 3D plane when the camera rotates, orbits, or tilts, matching CAD
         // behavior and circle.wgsl planar arcs.
-        let world_hw_a = select(wire_const.world_half_width, in.taper_ratio.x * wire_const.world_half_width, is_tapered);
-        let world_hw_b = select(wire_const.world_half_width, in.taper_ratio.y * wire_const.world_half_width, is_tapered);
+        let world_hw_a = select(wire_const.world_half_width, taper_ratio.x * wire_const.world_half_width, is_tapered);
+        let world_hw_b = select(wire_const.world_half_width, taper_ratio.y * wire_const.world_half_width, is_tapered);
         let cur_world_hw = mix(world_hw_a, world_hw_b, which_end);
-        let eff_hw = max(cur_world_hw, 0.5 * u.world_per_pixel);
+        let eff_hw = cur_world_hw + 0.5 * u.world_per_pixel;
 
         let world_delta = rel_b - rel_a;
         let world_len = length(world_delta);
@@ -171,7 +186,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, in: VertexIn) -> VertexOut 
 
         // A constant-width band slides each corner along the segment onto
         // its joint's bisector (miter), so neighbours meet without a notch.
-        let miter = select(in.taper_ratio, vec2<f32>(0.0), is_tapered) * MITER_LIMIT;
+        let miter = select(taper_ratio, vec2<f32>(0.0), is_tapered) * MITER_LIMIT;
         let along = mix(miter.x, miter.y, which_end) * eff_hw * side;
         let pos_rel = mix(rel_a, rel_b, which_end);
         let world_pos = pos_rel + perp_world * (eff_hw * side) + world_dir * along;
@@ -241,8 +256,13 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, in: VertexIn) -> VertexOut 
     out.pat0 = wire_const.pat0 * scale;
     out.pat1 = wire_const.pat1 * scale;
     out.min_elem = min_element;
-    out.align_end = wire_const.align_end * scale;
-    out.align_total = wire_const.align_total;
+    let run_total = select(dash_run_total(in.taper_bits.x, in.taper_bits.y), wire_const.align_total, wire_const.world_half_width > 0.0);
+    out.align_end = aligned_end_dash(
+        run_total,
+        out.pattern_length,
+        max(out.pat0.x, 0.0),
+    );
+    out.align_total = run_total;
     return out;
 }
 
@@ -269,17 +289,19 @@ fn in_dash(
         if distance <= align_end || distance >= align_total - align_end {
             return true;
         }
-        var first_dash = 0.0;
-        for (var i = 0u; i < count; i++) {
-            if elements[i] > 0.0 {
-                first_dash = elements[i];
-                break;
-            }
-        }
+        // The aligned pattern leads with its dash or dot (see wire.wgsl).
+        let first_dash = max(elements[0], 0.0);
         value = ((distance - align_end + first_dash) % pattern_length
             + pattern_length) % pattern_length;
+    } else if align_total < 0.0 {
+        // A closed path (see wire.wgsl).
+        if closed_dash_solid(-align_total, pattern_length) {
+            return true;
+        }
+        value = closed_dash_phase(distance, -align_total, pattern_length);
     } else {
-        value = ((distance % pattern_length) + pattern_length) % pattern_length;
+        // The cap before the start reads as the start (see wire.wgsl).
+        value = ((max(distance, 0.0) % pattern_length) + pattern_length) % pattern_length;
     }
     var position = 0.0;
     let dot_half = u.world_per_pixel * 0.75;
@@ -344,5 +366,5 @@ fn fs_black(in: VertexOut) -> @location(0) vec4<f32> {
         discard;
     }
     let alpha = select(1.0, in.color.a, u.transparency_enable > 0.5);
-    return vec4<f32>(0.0, 0.0, 0.0, alpha);
+    return vec4<f32>(edge_color(), alpha);
 }

@@ -1,7 +1,7 @@
 //! Native parameter grip counts and restoration of default grip locations.
 use super::*;
 use crate::scene::block_authoring::{self as authoring, *};
-use codec::objects::*;
+use document::objects::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -57,7 +57,7 @@ fn one_mut(data: &mut DynamicBlockData) -> Option<&mut BlockOnePointParameter> {
 }
 
 impl Config {
-    fn read(doc: &CadDocument, definition: Handle, handle: Handle) -> Result<Self, &'static str> {
+    fn read(doc: &Document, definition: Handle, handle: Handle) -> Result<Self, &'static str> {
         let graph =
             authoring::graph(doc, definition)?.ok_or("The authoring graph is unavailable.")?;
         if let Some(ObjectType::BlockVisibilityParameter(p)) = doc.objects.get(&handle) {
@@ -166,7 +166,7 @@ impl Config {
     }
 }
 
-pub(crate) fn choices(doc: &CadDocument, definition: Handle, parameter: Handle) -> Vec<usize> {
+pub(crate) fn choices(doc: &Document, definition: Handle, parameter: Handle) -> Vec<usize> {
     let Ok(config) = Config::read(doc, definition, parameter) else {
         return vec![];
     };
@@ -176,7 +176,7 @@ pub(crate) fn choices(doc: &CadDocument, definition: Handle, parameter: Handle) 
         .collect()
 }
 
-fn graph_mut(doc: &mut CadDocument, graph: Handle) -> &mut BlockEvaluationGraph {
+fn graph_mut(doc: &mut Document, graph: Handle) -> &mut BlockEvaluationGraph {
     let ObjectType::DynamicBlock(object) = doc.objects.get_mut(&graph).unwrap() else {
         unreachable!()
     };
@@ -186,7 +186,7 @@ fn graph_mut(doc: &mut CadDocument, graph: Handle) -> &mut BlockEvaluationGraph 
     graph
 }
 fn link(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     graph: Handle,
     source: i32,
     destination: i32,
@@ -207,7 +207,7 @@ fn link(
     authoring::graph::link(graph, source, destination)
 }
 fn component(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     definition: Handle,
     graph: Handle,
     id: i32,
@@ -262,7 +262,7 @@ fn component(
 
 /// None restores positions; Some changes the grip count. Commit only complete graphs.
 pub(crate) fn set(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     definition: Handle,
     parameter: Handle,
     count: Option<usize>,
@@ -588,7 +588,7 @@ pub(crate) fn set(
 }
 
 pub(crate) fn snapshot(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
 ) -> Result<Vec<(Handle, ObjectType)>, &'static str> {
     let graph = authoring::graph(doc, definition)?.ok_or("The authoring graph is unavailable.")?;
@@ -606,7 +606,7 @@ pub(crate) fn snapshot(
         .map(|(handle, object)| (*handle, object.clone()))
         .collect())
 }
-pub(crate) fn count(doc: &CadDocument, definition: Handle, parameter: Handle) -> Option<usize> {
+pub(crate) fn count(doc: &Document, definition: Handle, parameter: Handle) -> Option<usize> {
     let config = Config::read(doc, definition, parameter).ok()?;
     Some(config.ids.iter().filter(|id| **id > 0).count())
 }
@@ -620,7 +620,7 @@ pub(crate) struct NativeGrip {
 }
 
 pub(crate) fn locations(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     parameter: Handle,
 ) -> Result<Vec<NativeGrip>, &'static str> {
@@ -678,7 +678,7 @@ pub(crate) fn locations(
 }
 
 pub(crate) fn set_location(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     definition: Handle,
     parameter: Handle,
     role: usize,
@@ -708,7 +708,7 @@ pub(crate) fn set_location(
 
 /// Keep native display glyphs separate from definition geometry and labels.
 pub(crate) fn apply_graphic(
-    doc: &CadDocument,
+    doc: &Document,
     definition: Handle,
     parameter: Handle,
     graphic: &mut crate::scene::block_distance_parameter::Graphic,
@@ -735,15 +735,15 @@ mod tests {
         block_actions as actions, block_distance_parameter as distance,
         block_orientation_parameter as orientation, Scene,
     };
-    use codec::{DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
+    use document::{DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
     use std::io::Cursor;
 
-    fn fixture(family: usize) -> (CadDocument, Handle, Handle) {
+    fn fixture(family: usize) -> (Document, Handle, Handle) {
         let mut scene = Scene::new();
         scene.define_block_raw(
             "GRIPS",
             Vector3::ZERO,
-            vec![EntityType::Line(codec::entities::Line::from_points(
+            vec![EntityType::Line(document::entities::Line::from_points(
                 Vector3::UNIT_X,
                 Vector3::new(2., 0., 0.),
             ))],
@@ -817,7 +817,7 @@ mod tests {
         }
         (scene.document, definition, parameter)
     }
-    fn check_graph(doc: &CadDocument, definition: Handle) {
+    fn check_graph(doc: &Document, definition: Handle) {
         let handle = authoring::graph(doc, definition).unwrap().unwrap();
         let ObjectType::DynamicBlock(object) = &doc.objects[&handle] else {
             panic!()
@@ -830,7 +830,7 @@ mod tests {
             .iter()
             .all(|node| authoring::graph::valid_lists(graph, node.id)));
     }
-    fn native_grips(doc: &CadDocument, definition: Handle, parameter: Handle) -> Vec<Handle> {
+    fn native_grips(doc: &Document, definition: Handle, parameter: Handle) -> Vec<Handle> {
         let config = Config::read(doc, definition, parameter).unwrap();
         let mut handles = doc
             .objects
@@ -1117,13 +1117,26 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the local dynamic block DWG fixtures"]
-    fn block_grip_counts_native_two_grip_fixture_roundtrips() {
-        let root =
-            std::env::var("OCS_DYNAMIC_BLOCK_FIXTURES").expect("set OCS_DYNAMIC_BLOCK_FIXTURES");
-        let path = std::path::Path::new(&root).join("DWG-2018/BT.dwg");
-        let mut doc = DwgReader::from_file(&path).unwrap().read().unwrap();
-        let parameter = doc
+    fn block_grip_counts_reloaded_two_grip_linear_parameter_cycles_and_roundtrips() {
+        let (mut doc, definition, parameter) = fixture(1);
+        let target = doc.block_records.get("GRIPS").unwrap().entity_handles[0];
+        actions::create_with_options(
+            &mut doc,
+            definition,
+            actions::Kind::Move,
+            parameter,
+            Some(actions::XyKeyPoint::Base),
+            &[target],
+            glam::DVec3::ZERO,
+            None,
+            None,
+        )
+        .unwrap();
+        set(&mut doc, definition, parameter, Some(2)).unwrap();
+        let mut doc = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
+            .read()
+            .unwrap();
+        let found = doc
             .objects
             .iter()
             .find_map(|(handle, object)| match object {
@@ -1138,23 +1151,20 @@ mod tests {
                 },
                 _ => None,
             })
-            .expect("the native fixture contains a two-grip Linear parameter");
-        let definition = doc
-            .block_records
-            .iter()
-            .find(|record| {
-                authoring::graph(&doc, record.handle).ok().flatten() == Some(parameter.1)
-            })
-            .unwrap()
-            .handle;
-        assert_eq!(count(&doc, definition, parameter.0), Some(2));
+            .expect("reloaded two-grip Linear parameter");
+        assert_eq!(found.0, parameter);
+        assert_eq!(
+            authoring::graph(&doc, definition).ok().flatten(),
+            Some(found.1)
+        );
+        assert_eq!(count(&doc, definition, parameter), Some(2));
         let actions_before = actions::actions(&doc, definition)
             .into_iter()
             .map(|(handle, ..)| (handle, doc.objects[&handle].clone()))
             .collect::<Vec<_>>();
         for desired in [1, 0, 2] {
-            set(&mut doc, definition, parameter.0, Some(desired)).unwrap();
-            assert_eq!(count(&doc, definition, parameter.0), Some(desired));
+            set(&mut doc, definition, parameter, Some(desired)).unwrap();
+            assert_eq!(count(&doc, definition, parameter), Some(desired));
             check_graph(&doc, definition);
             assert!(actions_before
                 .iter()
@@ -1169,10 +1179,12 @@ mod tests {
                 .read()
                 .unwrap(),
         ] {
-            assert_eq!(count(&saved, definition, parameter.0), Some(2));
+            assert_eq!(count(&saved, definition, parameter), Some(2));
             check_graph(&saved, definition);
         }
     }
+
+
 
     #[test]
     fn block_grip_counts_reject_malformed_and_shared_dependencies_atomically() {

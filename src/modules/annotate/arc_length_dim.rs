@@ -1,6 +1,6 @@
-use codec::entities::{Dimension, DimensionArc};
-use codec::types::{Handle, Vector3};
-use codec::EntityType;
+use document::entities::{Dimension, DimensionArc};
+use document::types::{Handle, Vector3};
+use document::EntityType;
 use glam::DVec3;
 use kernel::geom2d::tessellate::{arc, DEFAULT_SEGMENTS_PER_RADIAN};
 
@@ -284,7 +284,7 @@ impl CadCommand for ArcLengthDimensionCommand {
         }
         match self.step {
             Step::SelectObject => {
-                crate::t!("DIMARC  Select arc, polyline arc segment, or circular region arc edge:")
+                crate::t!("DIMARC  Select arc or polyline arc segment:")
                     .into_owned()
             }
             Step::DimLine(selection) => {

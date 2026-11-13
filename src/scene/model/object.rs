@@ -1,6 +1,6 @@
 // Shared value types used by the dispatch and grip systems.
 
-use codec::types::{Color as AcadColor, Handle, LineWeight};
+use document::types::{Color as AcadColor, Handle, LineWeight};
 use glam::DVec3;
 
 /// Stable identity of a native reference parameter property.
@@ -9,6 +9,8 @@ pub struct BlockParameterKey {
     pub document: u64,
     pub definition: Handle,
     pub insert: Handle,
+    pub batch_generation: Option<u64>,
+    pub editor_session: Option<u64>,
     pub parameter: Handle,
     pub component: BlockParameterComponent,
 }
@@ -19,6 +21,7 @@ pub enum BlockParameterComponent {
     Distance,
     Angle,
     Flip,
+    Visibility(u64),
     TableRow(u64),
     LookupOutput { column: usize, revision: u64 },
 }
@@ -101,6 +104,17 @@ pub enum PropValue {
     /// an editable text_input. Unlike the other rows the routing key is the
     /// tag carried here, not the row's `&'static str` field.
     AttrText { tag: String, value: String },
+    /// One plugin class parameter row (API v14): the declared name is the
+    /// routing key (the AttrText precedent) and routes the commit to the
+    /// class-parameter record path. `editable` decides between the text
+    /// input and a read-only rendering — a reference-only (host-staged)
+    /// selection renders read-only no matter the declaration, with the
+    /// owning record row named in the section's source line.
+    PluginParam {
+        name: String,
+        value: String,
+        editable: bool,
+    },
     /// A clickable link to one or more entities — the Constraints section's
     /// row for one parametric constraint. Clicking it selects every
     /// entity in `handles` in the viewport. `conflicting` mirrors
@@ -170,7 +184,13 @@ pub enum GripShape {
     Square,
     Rectangle,
     Triangle,
+    /// Directional toggle with a shaft and arrowhead.
+    Arrow,
     Circle,
+    /// Diamond (a table cell range's fill handle).
+    Diamond,
+    /// Downward-pointing tag: the alignment parameter's anchor grip.
+    Alignment,
     /// Screen-offset menu selector.
     Dropdown,
     /// Menu selector placed immediately beside its anchor grip.
@@ -248,6 +268,8 @@ pub enum GripMenuAction {
     AddLeader,
     RemoveLeader,
     ReverseArrows,
+    /// Turn the arrowhead at this end to the other side of its line.
+    FlipArrow,
     MoveWithDimLine,
     MoveWithLeader,
     MoveIndependent,

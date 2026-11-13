@@ -1,8 +1,8 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use codec::io::dwg::DwgReader;
-use codec::{DwgReadOptions, DxfReader, DxfReaderConfiguration};
+use document::DwgReader;
+use document::{DwgReadOptions, DxfReader, DxfReaderConfiguration};
 use js_sys::{Function, Uint8Array};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
@@ -14,9 +14,10 @@ const HASH_MARKER: &str = "\nreport-source-sha256:";
 /// against it.
 const PROTOCOL_VERSION: u16 = ocs_save::PROTOCOL_VERSION;
 
-/// Parse DWG/DXF on a dedicated browser worker and return a compact serialized
-/// document. The main wasm instance only deserializes and installs it, so the
-/// expensive bit/handle/object decode never occupies the browser UI thread.
+/// Parse DWG/DXF (or a listed converter's format) on a dedicated browser
+/// worker and return a compact serialized document. The main wasm instance
+/// only deserializes and installs it, so the expensive bit/handle/object
+/// decode never occupies the browser UI thread.
 #[wasm_bindgen]
 pub fn parse_document(
     name: String,
@@ -30,7 +31,8 @@ pub fn parse_document(
     let bytes: Arc<[u8]> = Arc::from(bytes.to_vec());
     report_stage.call1(&JsValue::NULL, &JsValue::from_str("parse document"))?;
     let ext = name.rsplit('.').next().unwrap_or_default().to_lowercase();
-    if !matches!(ext.as_str(), "dwg" | "dxf") {
+    let external = ocs_save::external_format(&ext);
+    if !matches!(ext.as_str(), "dwg" | "dxf") && external.is_none() {
         return encode_result(
             Err((format!("Unsupported file format: .{ext}"), None)),
             None,
@@ -65,7 +67,12 @@ pub fn parse_document(
                     .and_then(|reader| reader.read_with_stats())
             }
         }
-        _ => unreachable!(),
+        _ => match external {
+            Some(format) => {
+                ocs_save::read_external(format, &bytes).map_err(document::DxfError::Custom)
+            }
+            None => unreachable!(),
+        },
     };
     let mut outcome = match outcome_result {
         Ok(outcome) => outcome,
@@ -105,14 +112,14 @@ pub fn parse_document(
     }
     if recovery_mode {
         outcome.document.notifications.notify(
-            codec::notification::NotificationType::Error,
+            document::notification::NotificationType::Error,
             format!("Initial read failed; recovery mode continued: {initial_error}"),
         );
-        codec::push_read_diagnostic(
+        document::push_read_diagnostic(
             &mut outcome.stats.diagnostics,
-            codec::ReadDiagnostic::new(
+            document::ReadDiagnostic::new(
                 "strict-read-failed",
-                codec::ReadStage::RecordStream,
+                document::ReadStage::RecordStream,
                 initial_error,
             ),
         );
@@ -153,30 +160,30 @@ pub fn serialize_document(
     Ok(Uint8Array::from(encoded.as_slice()))
 }
 
-fn report_fingerprint_needed(stats: &codec::ReadStats) -> bool {
+fn report_fingerprint_needed(stats: &document::ReadStats) -> bool {
     stats.recovered() || stats.skipped_source_records > 0 || !stats.stream_completed
 }
 
-fn recoverable_reader_error(error: &codec::DxfError) -> bool {
+fn recoverable_reader_error(error: &document::DxfError) -> bool {
     matches!(
         error,
-        codec::DxfError::Compression(_)
-            | codec::DxfError::Parse(_)
-            | codec::DxfError::InvalidDxfCode(_)
-            | codec::DxfError::InvalidHandle(_)
-            | codec::DxfError::ObjectNotFound(_)
-            | codec::DxfError::InvalidEntityType(_)
-            | codec::DxfError::ChecksumMismatch { .. }
-            | codec::DxfError::InvalidHeader(_)
-            | codec::DxfError::InvalidFormat(_)
-            | codec::DxfError::InvalidSentinel(_)
-            | codec::DxfError::Decompression(_)
-            | codec::DxfError::Encoding(_)
+        document::DxfError::Compression(_)
+            | document::DxfError::Parse(_)
+            | document::DxfError::InvalidDxfCode(_)
+            | document::DxfError::InvalidHandle(_)
+            | document::DxfError::ObjectNotFound(_)
+            | document::DxfError::InvalidEntityType(_)
+            | document::DxfError::ChecksumMismatch { .. }
+            | document::DxfError::InvalidHeader(_)
+            | document::DxfError::InvalidFormat(_)
+            | document::DxfError::InvalidSentinel(_)
+            | document::DxfError::Decompression(_)
+            | document::DxfError::Encoding(_)
     )
 }
 
 fn encode_result(
-    result: Result<codec::ReadOutcome, (String, Option<codec::ReadStats>)>,
+    result: Result<document::ReadOutcome, (String, Option<document::ReadStats>)>,
     source_sha256: Option<String>,
     recoverable_parse_error: bool,
     bytes: &[u8],

@@ -1,6 +1,6 @@
 [package]
 name = "OpenCADStudio"
-version = "2026.43.0"
+version = "2026.45.0"
 edition = "2021"
 build = "build.rs"
 default-run = "OpenCADStudio"
@@ -37,10 +37,10 @@ rfd = "0.17"
 clap = { version = "4", features = ["derive", "string"] }
 env_logger = "0.11"
 log = "0.4"
-codec = { package = "acadrust", git = "https://github.com/HakanSeven12/opencadcodec.git", rev = "24b037a", features = ["serde"] }
-kernel = { package = "opencadkernel", git = "https://github.com/HakanSeven12/opencadkernel.git", rev = "8df8743", features = ["acis", "offset"] }
-kernel-constraints = { package = "opencadkernel-constraints", git = "https://github.com/HakanSeven12/opencadkernel.git", rev = "8df8743" }
-graph = { package = "opencadgraph", git = "https://github.com/HakanSeven12/opencadgraph.git", rev = "7c6ca90" }
+document = { package = "opencaddocument", git = "https://github.com/HakanSeven12/opencaddocument.git", rev = "b9e1762", features = ["serde"] }
+kernel = { package = "opencadkernel", git = "https://github.com/HakanSeven12/opencadkernel.git", rev = "f058795", features = ["acis", "offset"] }
+kernel-constraints = { package = "opencadkernel-constraints", git = "https://github.com/HakanSeven12/opencadkernel.git", rev = "f058795" }
+graph = { package = "opencadgraph", git = "https://github.com/HakanSeven12/opencadgraph.git", rev = "5e4dc20" }
 dwg-thumbnailer = { path = "crates/dwg-thumbnailer" }
 # Shared SAVE serialization dispatch + web-worker wire format: one
 # implementation for the inline (fallback/native) path and the worker path.
@@ -114,7 +114,6 @@ objc2-foundation = { version = "0.2", features = ["NSArray", "NSURL", "NSString"
 [patch.crates-io]
 iced_core = { git = "https://github.com/iced-rs/iced.git", rev = "23604ff22ab0aad9e00b9327cb7b8546ed84db39" }
 iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "23604ff22ab0aad9e00b9327cb7b8546ed84db39" }
-
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom = "0.3"
@@ -203,14 +202,40 @@ web-sys = { version = "=0.3.85", features = [
 ] }
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "23604ff22ab0aad9e00b9327cb7b8546ed84db39", features = ["webgl", "fira-sans"] }
 
+# Skip debug metadata in routine builds to reduce compiler and linker work.
+# Restore the previous level with CARGO_PROFILE_DEV_DEBUG=1 or
+# CARGO_PROFILE_TEST_DEBUG=1 when needed.
 [profile.dev]
-debug = 1
-
-[profile.dev.package."*"]
+debug = 0
+# A wildcard package override would also override build-time dependencies.
 opt-level = 2
 
-[profile.test]
+# Build-time dependencies do not need the runtime optimization level.
+[profile.dev.build-override]
+opt-level = 0
+
+# Keep this list in sync with the root package and workspace members.
+[profile.dev.package]
+OpenCADStudio = { opt-level = 0 }
+ocs_plugin_api = { opt-level = 0 }
+ocs_save = { opt-level = 0 }
+ocs_web_worker = { opt-level = 0 }
+dwg-thumbnailer = { opt-level = 0 }
+dwg-thumbnailer-win = { opt-level = 0 }
+
+# Keep translation-resource and manifest parsing fast during macro expansion.
+i18n-embed = { opt-level = 2 }
+fluent-bundle = { opt-level = 2 }
+fluent-syntax = { opt-level = 2 }
+find-crate = { opt-level = 2 }
+"toml:0.5.11" = { opt-level = 2 }
+
+# meshopt's C++ build maps DEBUG=false to NDEBUG. Keep its C assertions.
+[profile.dev.package.meshopt]
 debug = 1
+
+[profile.test]
+debug = 0
 
 [profile.release]
 strip = true
@@ -280,6 +305,10 @@ name = "model_space_handle_lookup"
 harness = false
 
 [[bench]]
+name = "dimension_association_refresh"
+harness = false
+
+[[bench]]
 name = "parametric_presolve_fixpoint"
 harness = false
 
@@ -289,6 +318,46 @@ harness = false
 
 [[bench]]
 name = "tds_material_groups"
+harness = false
+
+[[bench]]
+name = "associative_refresh_dedup"
+harness = false
+
+[[bench]]
+name = "centerline_refresh_scan"
+harness = false
+
+[[bench]]
+name = "navigation_selection_bounds"
+harness = false
+
+[[bench]]
+name = "paper_viewport_hidden_handles"
+harness = false
+
+[[bench]]
+name = "i18n_label_render"
+harness = false
+
+[[bench]]
+name = "dependency_index_rebuild"
+harness = false
+
+[[bench]]
+name = "parametric_display_staging"
+harness = false
+
+[[bench]]
+name = "mesh_export"
+harness = false
+
+[[bench]]
+name = "hatch_pattern_segments"
+harness = false
+
+[[bench]]
+name = "scene_pick_micro"
 harness = false
 
 [[test]]

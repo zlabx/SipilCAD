@@ -23,7 +23,7 @@ pub const FONT_PATH: &str = "OFL-PTSans.txt";
 /// upstream (`version` di Cargo.toml, `OCS_APP_VERSION`), yang tetap mengikuti rilis Open CAD Studio dan dipakai bagian lain
 /// (agen pengguna jaringan, penanda dialog donasi, API otomasi). Format `<tahun>.<nomor>` tanpa awalan "v" dan tanpa angka nol
 /// di depan nomor; naikkan di sini bila SipilCAD merilis versi baru.
-pub const APP_VERSION: &str = "2027.2";
+pub const APP_VERSION: &str = "2027.3";
 
 /// Kalimat di bawah nama produk pada dialog About (pengganti "CAD application for Architecture & Engineering"). Satu kalimat;
 /// bila lebih lebar dari kartu atas, teks membungkus ke baris kedua.
@@ -43,6 +43,8 @@ const BLOCKED_URL_PARTS: &[&str] = &[
     "patreon.com",
     "reddit.com/r/opencadstudio",
     "open-aec.com",
+    // Situs upstream: halaman unduhan yang dibuka notifikasi update (src/io/update_check.rs, sejak v2026.45).
+    "opencadstudio.com",
     // Playlist tutorial YouTube milik upstream, dan thumbnail-nya.
     "plzq_tekifh9banoox1hicaunm3anzdbol",
     "i.ytimg.com",
@@ -106,6 +108,7 @@ mod tests {
             "https://www.patreon.com/api/oauth2/v2/campaigns",
             "https://www.reddit.com/r/OpenCADStudio/",
             "https://open-aec.com/",
+            "https://www.opencadstudio.com/download/",
             "https://youtube.com/playlist?list=PLZq_TEkIFh9bAnoOX1HiCAunm3anZDBOl",
             "https://www.youtube.com/watch?v=abc&list=PLZq_TEkIFh9bAnoOX1HiCAunm3anZDBOl",
             "https://i.ytimg.com/vi/abc/mqdefault.jpg",

@@ -9,15 +9,15 @@
 //   Pick two lines (line-only; arcs are not chamferable).
 //   Finds intersection, backs off dist1 along line 1 and dist2 along line 2.
 
-use codec::entities::{Arc as ArcEnt, Line as LineEnt, LwPolyline, LwVertex};
+use document::entities::{Arc as ArcEnt, Line as LineEnt, LwPolyline, LwVertex};
 
 // Shared plane geometry, from opencadkernel via the local adapters.
 use super::geom;
 use super::geom::{arc_points as arc_pts, line_line as ll, normalize_angle as norm_angle};
 use crate::t;
-use codec::entities::EntityCommon;
-use codec::types::Vector3;
-use codec::{EntityType, Handle};
+use document::entities::EntityCommon;
+use document::types::Vector3;
+use document::{EntityType, Handle};
 use glam::DVec3;
 use kernel::geom2d::{
     circle_circle_points as circle_circle_pts, fillet_between_rays, fillets_between, line_circle,
@@ -282,6 +282,16 @@ fn trim_to_xy(orig: &LineEnt, tangent: [f64; 2], dir: [f64; 2], unit: [f64; 2]) 
     // dir negative: keep from -∞ to t_tan (i.e. set end to tangent point)
     let dot = dir[0] * unit[0] + dir[1] * unit[1]; // +1 or -1
 
+    // The kept part runs from the tangent point on along `dir` to the far
+    // end. A tangent point past that end means the radius or distance is
+    // larger than the line; moving the end there would flip the line.
+    let far = if dot > 0.0 { orig.end } else { orig.start };
+    let room = (far.x - tangent[0]) * dir[0] + (far.y - tangent[1]) * dir[1];
+    let length = (orig.end.x - orig.start.x).hypot(orig.end.y - orig.start.y);
+    if room < -1e-9 * (1.0 + length) {
+        return None;
+    }
+
     if dot > 0.0 {
         // keep from tangent to end → move start to tangent point
         l.start = Vector3::new(tangent[0], tangent[1], z);
@@ -359,6 +369,28 @@ fn clamp_angle_to_arc(a: f64, start: f64, end: f64) -> f64 {
     }
 }
 
+/// The arc cut back or extended to `angle` on its circle. An angle on the
+/// drawn part keeps the side of `pick` (an angle too); one beyond it
+/// extends whichever end is nearer, as a corner or fillet meets it there.
+fn arc_to_angle(arc: &ArcEnt, angle: f64, pick: f64) -> ArcEnt {
+    let (start, end) = (arc.start_angle, arc.end_angle);
+    let span = arc_span(start, end);
+    let rel = (angle - start).rem_euclid(TAU);
+    if rel <= span {
+        let pick_rel = (clamp_angle_to_arc(pick, start, end) - start).rem_euclid(TAU);
+        return if rel <= pick_rel {
+            trim_arc(arc, angle, end)
+        } else {
+            trim_arc(arc, start, angle)
+        };
+    }
+    if rel - span <= TAU - rel {
+        trim_arc(arc, start, angle)
+    } else {
+        trim_arc(arc, angle, end)
+    }
+}
+
 /// Trim an arc so it goes from `new_start` to `new_end` (both in radians).
 fn trim_arc(orig: &ArcEnt, new_start: f64, new_end: f64) -> ArcEnt {
     let mut a = orig.clone();
@@ -403,6 +435,68 @@ fn lwpoly_nearest_seg(poly: &LwPolyline, click: [f64; 2]) -> usize {
         }
     }
     best_idx
+}
+
+/// A polyline's bulged segment as the counter-clockwise arc it draws, and
+/// whether the polyline runs it clockwise (a negative bulge): then the arc
+/// starts at the segment's end vertex.
+fn lwpoly_seg_as_arc(poly: &LwPolyline, seg_idx: usize) -> Option<(ArcEnt, bool)> {
+    let n = poly.vertices.len();
+    let v0 = poly.vertices.get(seg_idx)?;
+    let v1 = poly.vertices.get((seg_idx + 1) % n)?;
+    let bulge = crate::entities::common::BulgeArc::from_bulge(
+        [v0.location.x, v0.location.y],
+        [v1.location.x, v1.location.y],
+        v0.bulge,
+    )?;
+    let reversed = bulge.sweep < 0.0;
+    let mut arc = ArcEnt::new();
+    arc.common = poly.common.clone();
+    arc.common.handle = Handle::NULL;
+    arc.center = Vector3::new(bulge.center[0], bulge.center[1], poly.elevation);
+    arc.radius = bulge.radius;
+    let (start, end) = if reversed {
+        (bulge.end_angle, bulge.start_angle)
+    } else {
+        (bulge.start_angle, bulge.end_angle)
+    };
+    arc.start_angle = norm_angle(start);
+    arc.end_angle = norm_angle(end);
+    Some((arc, reversed))
+}
+
+/// The polyline with its bulged segment `seg_idx` replaced by `arc`, the
+/// segment's arc as the fillet cut it back or extended it: both ends of the
+/// segment go to the arc's ends, the bulge follows its new sweep.
+fn rebuild_poly_from_trimmed_arc(
+    poly: &LwPolyline,
+    seg_idx: usize,
+    reversed: bool,
+    arc: &ArcEnt,
+) -> LwPolyline {
+    let n = poly.vertices.len();
+    let mut new_poly = poly.clone();
+    new_poly.common.handle = Handle::NULL;
+    let at = |angle: f64| {
+        (
+            arc.center.x + arc.radius * angle.cos(),
+            arc.center.y + arc.radius * angle.sin(),
+        )
+    };
+    let (first, last) = if reversed {
+        (at(arc.end_angle), at(arc.start_angle))
+    } else {
+        (at(arc.start_angle), at(arc.end_angle))
+    };
+    let sweep = arc_span(arc.start_angle, arc.end_angle);
+    let vertex = &mut new_poly.vertices[seg_idx];
+    vertex.location.x = first.0;
+    vertex.location.y = first.1;
+    vertex.bulge = (sweep / 4.0).tan() * if reversed { -1.0 } else { 1.0 };
+    let end = &mut new_poly.vertices[(seg_idx + 1) % n];
+    end.location.x = last.0;
+    end.location.y = last.1;
+    new_poly
 }
 
 /// Extract a LwPolyline segment as a virtual `LineEnt` (ignores bulge).
@@ -630,8 +724,17 @@ fn lwpoly_replace_corner(
     vt2.bulge = 0.0;
     new_poly.vertices.remove(corner_idx);
     new_poly.vertices.insert(corner_idx, vt2);
-    new_poly.vertices.insert(corner_idx, vt1);
+    // A zero-size chamfer or fillet meets at one point: a second vertex there
+    // would leave a zero-length segment in the polyline.
+    if !same_xy(t1, t2) {
+        new_poly.vertices.insert(corner_idx, vt1);
+    }
     new_poly
+}
+
+/// Whether two plan points coincide within the modify tolerance.
+fn same_xy(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
 }
 
 /// Rebuild a LwPolyline after shortening segment `seg_idx`:
@@ -739,10 +842,71 @@ enum FilletEntity {
     Curve(EntityType),
 }
 
+/// Half-length of the stand-in line an XLINE or RAY is filleted and
+/// chamfered as; the piece kept turns back into a ray (`restore_infinite`).
+const INFINITE_REACH: f64 = 1.0e7;
+
+/// An XLINE as a long line through it, a RAY as a long line from its base.
+fn infinite_as_line(e: &EntityType) -> Option<LineEnt> {
+    let (common, base, direction, both_ways) = match e {
+        EntityType::XLine(x) => (&x.common, x.base_point, x.direction, true),
+        EntityType::Ray(r) => (&r.common, r.base_point, r.direction, false),
+        _ => return None,
+    };
+    if direction.length() < 1e-12 {
+        return None;
+    }
+    let reach = direction.normalize() * INFINITE_REACH;
+    let start = if both_ways { base - reach } else { base };
+    let mut line = LineEnt::from_points(start, base + reach);
+    line.common = common.clone();
+    Some(line)
+}
+
+/// A LINE, or an XLINE / RAY as its stand-in line.
+fn line_or_infinite(e: &EntityType) -> Option<LineEnt> {
+    match e {
+        EntityType::Line(l) => Some(l.clone()),
+        other => infinite_as_line(other),
+    }
+}
+
+/// The trimmed stand-in of an XLINE or RAY as the object it is: a ray where
+/// the kept piece still runs to infinity, a line between the ray's base and
+/// the cut otherwise. Anything else comes back unchanged.
+fn restore_infinite(original: Option<&EntityType>, trimmed: EntityType) -> EntityType {
+    let (Some(original), EntityType::Line(line)) = (original, &trimmed) else {
+        return trimmed;
+    };
+    let Some(stand_in) = infinite_as_line(original) else {
+        return trimmed;
+    };
+    let mut far_ends = vec![stand_in.end];
+    if matches!(original, EntityType::XLine(_)) {
+        far_ends.push(stand_in.start);
+    }
+    let is_far = |p: Vector3| far_ends.iter().any(|f| (*f - p).length() < INFINITE_REACH * 1e-9);
+    for (far, cut) in [(line.end, line.start), (line.start, line.end)] {
+        if is_far(far) && (far - cut).length() > 1e-12 {
+            return EntityType::Ray(document::entities::Ray {
+                common: line.common.clone(),
+                base_point: cut,
+                direction: (far - cut).normalize(),
+            });
+        }
+    }
+    trimmed
+}
+
+fn is_infinite(e: Option<&EntityType>) -> bool {
+    matches!(e, Some(EntityType::XLine(_) | EntityType::Ray(_)))
+}
+
 impl FilletEntity {
     fn from_entity(e: &EntityType) -> Option<Self> {
         match e {
             EntityType::Line(l) => Some(Self::Line(l.clone())),
+            EntityType::XLine(_) | EntityType::Ray(_) => infinite_as_line(e).map(Self::Line),
             EntityType::Arc(a) => Some(Self::Arc(a.clone())),
             EntityType::Circle(_) | EntityType::Ellipse(_) | EntityType::Spline(_) => {
                 crate::entities::curve::entity_curve_xy(e).map(|_| Self::Curve(e.clone()))
@@ -805,13 +969,54 @@ fn compute_fillet_entities(
     radius: f64,
 ) -> Option<(EntityType, EntityType, Option<EntityType>)> {
     let z = e1.elevation();
-    // A polyline arc segment would be filleted as its straight chord.
-    let picks_arc_segment = |entity: &FilletEntity| {
-        matches!(entity, FilletEntity::LwPoly { poly, seg_idx, .. }
-            if poly.vertices.get(*seg_idx).is_some_and(|vertex| vertex.bulge.abs() > 1e-12))
-    };
-    if picks_arc_segment(e1) || picks_arc_segment(e2) {
-        return None;
+    // A polyline's arc segment fillets as the arc it draws; the cut-back arc
+    // then goes back into the polyline as its end point and bulge.
+    fn arc_segment(entity: &FilletEntity) -> Option<(&LwPolyline, usize, ArcEnt, bool)> {
+        match entity {
+            FilletEntity::LwPoly { poly, seg_idx, .. }
+                if poly.vertices.get(*seg_idx).is_some_and(|v| v.bulge.abs() > 1e-12) =>
+            {
+                let (arc, reversed) = lwpoly_seg_as_arc(poly, *seg_idx)?;
+                Some((poly, *seg_idx, arc, reversed))
+            }
+            _ => None,
+        }
+    }
+    let (s1, s2) = (arc_segment(e1), arc_segment(e2));
+    if s1.is_some() || s2.is_some() {
+        // Two segments of one polyline round their shared corner elsewhere.
+        if let (
+            FilletEntity::LwPoly { handle: h1, .. },
+            FilletEntity::LwPoly { handle: h2, .. },
+        ) = (e1, e2)
+        {
+            if h1 == h2 {
+                return None;
+            }
+        }
+        let as_arc = |segment: &Option<(&LwPolyline, usize, ArcEnt, bool)>| {
+            segment.as_ref().map(|(_, _, arc, _)| FilletEntity::Arc(arc.clone()))
+        };
+        let (a1, a2) = (as_arc(&s1), as_arc(&s2));
+        let (r1, r2, fillet) = compute_fillet_entities(
+            a1.as_ref().unwrap_or(e1),
+            click1,
+            a2.as_ref().unwrap_or(e2),
+            click2,
+            radius,
+        )?;
+        let back = |segment: &Option<(&LwPolyline, usize, ArcEnt, bool)>, result: EntityType| {
+            match (segment, result) {
+                (Some((poly, seg_idx, _, reversed)), EntityType::Arc(arc)) => Some(
+                    EntityType::LwPolyline(rebuild_poly_from_trimmed_arc(
+                        poly, *seg_idx, *reversed, &arc,
+                    )),
+                ),
+                (None, result) => Some(result),
+                _ => None,
+            }
+        };
+        return Some((back(&s1, r1)?, back(&s2, r2)?, fillet));
     }
     if matches!(e1, FilletEntity::Curve(_)) || matches!(e2, FilletEntity::Curve(_)) {
         return fillet_curves(e1, click1, e2, click2, radius, z);
@@ -1039,6 +1244,7 @@ fn join_poly_fillet(
     seg_idx: usize,
     moved: &LwPolyline,
     other: &EntityType,
+    other_seg: Option<(&LwPolyline, usize)>,
     fillet: Option<&EntityType>,
 ) -> Option<LwPolyline> {
     let n = poly.vertices.len();
@@ -1072,14 +1278,15 @@ fn join_poly_fillet(
         None => (t, None),
     };
 
-    // The other object from T2 to its far end, with the bulge that runs it
-    // in that direction.
-    let (far, far_bulge) = match other {
+    // The other object from T2 to its far end: the bulge of its first
+    // segment and the vertices after T2, each with the bulge of the segment
+    // that leaves it, in that direction.
+    let (first_bulge, chain): (f64, Vec<([f64; 2], f64)>) = match other {
         EntityType::Line(l) => {
             let a = [l.start.x, l.start.y];
             let b = [l.end.x, l.end.y];
             let dist = |p: [f64; 2]| (p[0] - t2[0]).hypot(p[1] - t2[1]);
-            (if dist(a) > dist(b) { a } else { b }, 0.0)
+            (0.0, vec![(if dist(a) > dist(b) { a } else { b }, 0.0)])
         }
         EntityType::Arc(a) if a.normal.z > 0.0 => {
             let (c, r, sa, ea, _) = arc_geom(a);
@@ -1088,9 +1295,42 @@ fn join_poly_fillet(
             let quarter = (arc_span(sa, ea) / 4.0).tan();
             let dist = |p: [f64; 2]| (p[0] - t2[0]).hypot(p[1] - t2[1]);
             if dist(p0) <= dist(p1) {
-                (p1, quarter)
+                (quarter, vec![(p1, 0.0)])
             } else {
-                (p0, -quarter)
+                (-quarter, vec![(p0, 0.0)])
+            }
+        }
+        // Another polyline, `other_seg` being it before the fillet and the
+        // segment the fillet trimmed: it is cut there like this one, keeping
+        // the picked side, and its vertices follow on from the cut (#1422).
+        EntityType::LwPolyline(other) => {
+            let (orig, s) = other_seg?;
+            let m = orig.vertices.len();
+            if m < 2 || other.vertices.len() != m || orig.vertices[s].bulge.abs() > 1e-12 {
+                return None;
+            }
+            // A closed polyline is opened at its closing segment first.
+            let mut v = orig.vertices.clone();
+            if orig.is_closed {
+                let mut last = v[0].clone();
+                last.bulge = 0.0;
+                v.push(last);
+            }
+            let end_moved = !near(
+                xy(&orig.vertices[(s + 1) % m]),
+                xy(&other.vertices[(s + 1) % m]),
+            );
+            if end_moved {
+                let chain = (0..=s)
+                    .rev()
+                    .map(|k| (xy(&v[k]), if k > 0 { -v[k - 1].bulge } else { 0.0 }))
+                    .collect();
+                (0.0, chain)
+            } else {
+                let chain = (s + 1..v.len())
+                    .map(|k| (xy(&v[k]), if k + 1 < v.len() { v[k].bulge } else { 0.0 }))
+                    .collect();
+                (0.0, chain)
             }
         }
         _ => return None,
@@ -1116,16 +1356,21 @@ fn join_poly_fillet(
         let bulge = fillet_center.map_or(0.0, |c| compute_bulge(t, t2, c));
         vertices.push(vertex(t, bulge));
         if fillet_center.is_some() {
-            vertices.push(vertex(t2, far_bulge));
+            vertices.push(vertex(t2, first_bulge));
         } else if let Some(last) = vertices.last_mut() {
-            last.bulge = far_bulge;
+            last.bulge = first_bulge;
         }
-        vertices.push(vertex(far, 0.0));
+        vertices.extend(chain.iter().map(|&(p, b)| vertex(p, b)));
     } else {
-        // Keep the end side: the other object, the fillet, then T and the
-        // vertices after the segment.
-        let other_back = -far_bulge;
-        vertices.push(vertex(far, other_back));
+        // Keep the end side: the other object run backwards, the fillet,
+        // then T and the vertices after the segment. Running backwards, a
+        // vertex takes the negated bulge of the segment that arrived at it.
+        let arriving: Vec<f64> = std::iter::once(first_bulge)
+            .chain(chain.iter().map(|&(_, b)| b))
+            .collect();
+        for (k, &(p, _)) in chain.iter().enumerate().rev() {
+            vertices.push(vertex(p, -arriving[k]));
+        }
         if let Some(c) = fillet_center {
             vertices.push(vertex(t2, compute_bulge(t2, t, c)));
         }
@@ -1200,7 +1445,7 @@ fn fillet_line_arc(
     z: f64,
 ) -> Option<(EntityType, EntityType, Option<EntityType>)> {
     let (p1, _, u, _) = line_geom(line);
-    let (ac, ar, a_start, a_end, _) = arc_geom(arc);
+    let (ac, ar, _, _, _) = arc_geom(arc);
 
     // Intersection of infinite line with the arc's circle
     let ts = line_circle(p1, u, ac, ar);
@@ -1222,21 +1467,8 @@ fn fillet_line_arc(
 
         // Trim line to intersection
         let new_line = trim_line_to_point(line, [ix, iy], click_line)?;
-        // Trim arc to intersection angle
-        let i_angle = arc_angle_at(ac, [ix, iy]);
-        let i_clamped = clamp_angle_to_arc(i_angle, a_start, a_end);
-        let arc_click_angle = arc_angle_at(ac, click_arc);
-        let arc_click_clamped = clamp_angle_to_arc(arc_click_angle, a_start, a_end);
-        // Keep the arc side from i_clamped toward the click
-        let new_arc = if {
-            let sp_to_click = arc_span(i_clamped, arc_click_clamped);
-            let sp_click_to_end = arc_span(arc_click_clamped, a_end);
-            sp_to_click <= sp_click_to_end
-        } {
-            trim_arc(arc, i_clamped, a_end)
-        } else {
-            trim_arc(arc, a_start, i_clamped)
-        };
+        // Cut or extend the arc to the same corner.
+        let new_arc = arc_to_angle(arc, arc_angle_at(ac, [ix, iy]), arc_angle_at(ac, click_arc));
         return Some((EntityType::Line(new_line), EntityType::Arc(new_arc), None));
     }
 
@@ -1251,24 +1483,16 @@ fn fillet_line_arc(
         click_arc,
         radius,
     ) {
-        // The touch on the arc has to be on the drawn part of it, not on the
-        // rest of the circle it belongs to.
-        let tp_arc_angle = arc_angle_at(ac, fillet.tangent2);
-        let tp_arc_clamped = clamp_angle_to_arc(tp_arc_angle, a_start, a_end);
-        if (norm_angle(tp_arc_angle) - norm_angle(tp_arc_clamped)).abs() > 0.01 {
-            continue;
-        }
         let Some(new_line) = trim_line_to_point(line, fillet.tangent1, click_line) else {
             continue;
         };
-        // Keep the side of the arc the click is on.
-        let arc_click_rel = (arc_angle_at(ac, click_arc) - a_start).rem_euclid(TAU);
-        let tp_arc_rel = (tp_arc_clamped - a_start).rem_euclid(TAU);
-        let new_arc = if tp_arc_rel <= arc_click_rel {
-            trim_arc(arc, tp_arc_clamped, a_end)
-        } else {
-            trim_arc(arc, a_start, tp_arc_clamped)
-        };
+        // The arc is cut back to its touch, or extended to it when the
+        // fillet meets its circle past the drawn part.
+        let new_arc = arc_to_angle(
+            arc,
+            arc_angle_at(ac, fillet.tangent2),
+            arc_angle_at(ac, click_arc),
+        );
         return Some((
             EntityType::Line(new_line),
             EntityType::Arc(new_arc),
@@ -1292,8 +1516,8 @@ fn fillet_arc_arc(
     radius: f64,
     z: f64,
 ) -> Option<(EntityType, EntityType, Option<EntityType>)> {
-    let (c1, r1, s1, e1, _) = arc_geom(a1);
-    let (c2, r2, s2, e2, _) = arc_geom(a2);
+    let (c1, r1, _, _, _) = arc_geom(a1);
+    let (c2, r2, _, _, _) = arc_geom(a2);
 
     if radius < 1e-9 {
         // r=0: trim both arcs to their intersection point
@@ -1313,53 +1537,25 @@ fn fillet_arc_arc(
             return None;
         }
 
-        let ia1 = arc_angle_at(c1, ip);
-        let ia2 = arc_angle_at(c2, ip);
-        let ic1 = clamp_angle_to_arc(ia1, s1, e1);
-        let ic2 = clamp_angle_to_arc(ia2, s2, e2);
-
-        let ca1 = clamp_angle_to_arc(arc_angle_at(c1, click1), s1, e1);
-        let ca2 = clamp_angle_to_arc(arc_angle_at(c2, click2), s2, e2);
-
-        let new_a1 = if (ic1 - s1).rem_euclid(TAU) <= (ca1 - s1).rem_euclid(TAU) {
-            trim_arc(a1, ic1, e1)
-        } else {
-            trim_arc(a1, s1, ic1)
-        };
-        let new_a2 = if (ic2 - s2).rem_euclid(TAU) <= (ca2 - s2).rem_euclid(TAU) {
-            trim_arc(a2, ic2, e2)
-        } else {
-            trim_arc(a2, s2, ic2)
-        };
+        let new_a1 = arc_to_angle(a1, arc_angle_at(c1, ip), arc_angle_at(c1, click1));
+        let new_a2 = arc_to_angle(a2, arc_angle_at(c2, ip), arc_angle_at(c2, click2));
         return Some((EntityType::Arc(new_a1), EntityType::Arc(new_a2), None));
     }
 
     // Same construction as the line-and-arc case, from the same place: the
     // centre is where an offset of one circle crosses an offset of the other.
-    for fillet in ranked_fillets(&arc_curve(a1), click1, &arc_curve(a2), click2, radius) {
-        // Both touches have to be on the drawn parts of their arcs.
-        let tp1_angle = arc_angle_at(c1, fillet.tangent1);
-        let tp2_angle = arc_angle_at(c2, fillet.tangent2);
-        let tc1 = clamp_angle_to_arc(tp1_angle, s1, e1);
-        let tc2 = clamp_angle_to_arc(tp2_angle, s2, e2);
-        if (norm_angle(tp1_angle) - norm_angle(tc1)).abs() > 0.01
-            || (norm_angle(tp2_angle) - norm_angle(tc2)).abs() > 0.01
-        {
-            continue;
-        }
-
-        let ca1 = clamp_angle_to_arc(arc_angle_at(c1, click1), s1, e1);
-        let ca2 = clamp_angle_to_arc(arc_angle_at(c2, click2), s2, e2);
-        let new_a1 = if (tc1 - s1).rem_euclid(TAU) <= (ca1 - s1).rem_euclid(TAU) {
-            trim_arc(a1, tc1, e1)
-        } else {
-            trim_arc(a1, s1, tc1)
-        };
-        let new_a2 = if (tc2 - s2).rem_euclid(TAU) <= (ca2 - s2).rem_euclid(TAU) {
-            trim_arc(a2, tc2, e2)
-        } else {
-            trim_arc(a2, s2, tc2)
-        };
+    if let Some(fillet) = ranked_fillets(&arc_curve(a1), click1, &arc_curve(a2), click2, radius).into_iter().next() {
+        // Each arc is cut back to its touch, or extended to it.
+        let new_a1 = arc_to_angle(
+            a1,
+            arc_angle_at(c1, fillet.tangent1),
+            arc_angle_at(c1, click1),
+        );
+        let new_a2 = arc_to_angle(
+            a2,
+            arc_angle_at(c2, fillet.tangent2),
+            arc_angle_at(c2, click2),
+        );
         return Some((
             EntityType::Arc(new_a1),
             EntityType::Arc(new_a2),
@@ -1511,7 +1707,15 @@ fn trim_line_to_point(line: &LineEnt, isect: [f64; 2], click: [f64; 2]) -> Optio
 
 // ── Chamfer ────────────────────────────────────────────────────────────────
 
+fn lines_parallel(l1: &LineEnt, l2: &LineEnt) -> bool {
+    let (_, _, u1, _) = line_geom(l1);
+    let (_, _, u2, _) = line_geom(l2);
+    (u1[0] * u2[1] - u1[1] * u2[0]).abs() <= 1.0e-6
+}
+
 /// Compute chamfer: trim l1 by dist1 from intersection, l2 by dist2, add chamfer line.
+/// The chamfer line is `None` when both distances are zero: the lines then
+/// simply meet at their corner and a zero-length line would be left behind.
 fn compute_chamfer(
     l1: &LineEnt,
     click1: [f64; 2],
@@ -1519,7 +1723,7 @@ fn compute_chamfer(
     l2: &LineEnt,
     click2: [f64; 2],
     dist2: f64,
-) -> Option<(EntityType, EntityType, EntityType)> {
+) -> Option<(EntityType, EntityType, Option<EntityType>)> {
     let (p1, _, u1, _) = line_geom(l1);
     let (p3, _, u2, _) = line_geom(l2);
 
@@ -1551,16 +1755,15 @@ fn compute_chamfer(
     let new_l2 = trim_to_xy(l2, c2, dir2, u2)?;
 
     // Chamfer line
-    let mut cline = l1.clone();
-    cline.common.handle = Handle::NULL;
-    cline.start = Vector3::new(c1[0], c1[1], z);
-    cline.end = Vector3::new(c2[0], c2[1], z);
+    let cline = (!same_xy(c1, c2)).then(|| {
+        let mut cline = l1.clone();
+        cline.common.handle = Handle::NULL;
+        cline.start = Vector3::new(c1[0], c1[1], z);
+        cline.end = Vector3::new(c2[0], c2[1], z);
+        EntityType::Line(cline)
+    });
 
-    Some((
-        EntityType::Line(new_l1),
-        EntityType::Line(new_l2),
-        EntityType::Line(cline),
-    ))
+    Some((EntityType::Line(new_l1), EntityType::Line(new_l2), cline))
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1897,7 +2100,7 @@ impl CadCommand for FilletCommand {
         self.undo_last()
     }
 
-    fn on_document_undone(&mut self, document: &codec::CadDocument) {
+    fn on_document_undone(&mut self, document: &document::Document) {
         self.all_entities = document
             .entities()
             .map(crate::entities::curve::entity_with_lwpolyline_world_xy)
@@ -2004,6 +2207,31 @@ impl CadCommand for FilletCommand {
                                     *seg_idx,
                                     moved,
                                     other,
+                                    None,
+                                    maybe_arc.as_ref(),
+                                )
+                                .map(|poly| {
+                                    vec![
+                                        (h1, vec![EntityType::LwPolyline(poly)]),
+                                        (handle, Vec::new()),
+                                    ]
+                                }),
+                                // Two polylines join into the first one.
+                                (
+                                    FilletEntity::LwPoly { poly, seg_idx, .. },
+                                    FilletEntity::LwPoly {
+                                        poly: poly2,
+                                        seg_idx: seg2,
+                                        ..
+                                    },
+                                    EntityType::LwPolyline(moved),
+                                    other,
+                                ) if !same_entity => join_poly_fillet(
+                                    poly,
+                                    *seg_idx,
+                                    moved,
+                                    other,
+                                    Some((poly2, *seg2)),
                                     maybe_arc.as_ref(),
                                 )
                                 .map(|poly| {
@@ -2022,6 +2250,7 @@ impl CadCommand for FilletCommand {
                                     *seg_idx,
                                     moved,
                                     other,
+                                    None,
                                     maybe_arc.as_ref(),
                                 )
                                 .map(|poly| {
@@ -2032,9 +2261,18 @@ impl CadCommand for FilletCommand {
                                 }),
                                 _ => None,
                             };
+                            let original1 = self.entity_index.get(&self.all_entities, h1).cloned();
+                            let original2 =
+                                self.entity_index.get(&self.all_entities, handle).cloned();
+                            // An XLINE or RAY is not taken into a polyline.
+                            let joined = joined.filter(|_| {
+                                !is_infinite(original1.as_ref()) && !is_infinite(original2.as_ref())
+                            });
                             if let Some(replacements) = joined {
                                 return self.continue_after_fillet(replacements);
                             }
+                            let new_e1 = restore_infinite(original1.as_ref(), new_e1);
+                            let new_e2 = restore_infinite(original2.as_ref(), new_e2);
                             let mut first_replacements = vec![new_e1];
                             if let Some(arc) = maybe_arc {
                                 first_replacements.push(arc);
@@ -2047,7 +2285,7 @@ impl CadCommand for FilletCommand {
                             };
                             self.continue_after_fillet(replacements)
                         }
-                        None => CmdResult::NeedPoint,
+                        None => CmdResult::ReportError(t!("Radius is too large.").into_owned()),
                     }
                 } else {
                     CmdResult::NeedPoint
@@ -2215,6 +2453,10 @@ impl CadCommand for FilletCommand {
         self.entity_index = ModifyEntityIndex::build(&self.all_entities);
     }
     fn on_enter(&mut self) -> CmdResult {
+        // Enter at the radius or trim prompt accepts its default.
+        if self.wants_text_input() {
+            return self.on_text_input("").unwrap_or(CmdResult::NeedPoint);
+        }
         CmdResult::Cancel
     }
     fn on_escape(&mut self) -> CmdResult {
@@ -2320,6 +2562,10 @@ enum ChamferStep {
 
 /// The refusal a no-trim CHAMFER prints for anything but two independent Lines.
 const NO_TRIM_CHAMFER_LINES_ONLY: &str = "No-trim chamfer supports two independent lines only.";
+
+/// The refusal a no-trim CHAMFER prints when both distances are zero: the
+/// cut would be a zero-length line.
+const NO_TRIM_CHAMFER_ZERO: &str = "Zero chamfer distances with No trim leave nothing to add.";
 
 pub struct ChamferCommand {
     dist1: f64,
@@ -2543,6 +2789,8 @@ impl CadCommand for ChamferCommand {
                 if let Some(v) = crate::entities::common::parse_typed_length(t) {
                     self.dist1 = v.max(0.0);
                     defaults::set_chamfer_dist1(self.dist1);
+                    // The second distance offers the first as its default.
+                    self.dist2 = self.dist1;
                     self.step = ChamferStep::WaitingForDist2;
                     return Some(CmdResult::NeedPoint);
                 }
@@ -2627,7 +2875,7 @@ impl CadCommand for ChamferCommand {
         self.undo_last()
     }
 
-    fn on_document_undone(&mut self, document: &codec::CadDocument) {
+    fn on_document_undone(&mut self, document: &document::Document) {
         self.all_entities = document
             .entities()
             .map(crate::entities::curve::entity_with_lwpolyline_world_xy)
@@ -2677,12 +2925,14 @@ impl CadCommand for ChamferCommand {
             }
             ChamferStep::First => {
                 match self.entity_index.get(&self.all_entities, handle) {
-                    Some(EntityType::Line(l)) => {
-                        self.step = ChamferStep::Second {
-                            h1: handle,
-                            l1: l.clone(),
-                            click1: click,
-                        };
+                    Some(e @ (EntityType::Line(_) | EntityType::XLine(_) | EntityType::Ray(_))) => {
+                        if let Some(l) = line_or_infinite(e) {
+                            self.step = ChamferStep::Second {
+                                h1: handle,
+                                l1: l,
+                                click1: click,
+                            };
+                        }
                     }
                     Some(EntityType::LwPolyline(p)) => {
                         if !self.trim {
@@ -2729,13 +2979,7 @@ impl CadCommand for ChamferCommand {
                 let l2 = self
                     .entity_index
                     .get(&self.all_entities, handle)
-                    .and_then(|e| {
-                        if let EntityType::Line(l) = e {
-                            Some(l.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .and_then(line_or_infinite);
 
                 if let Some(l2) = l2 {
                     match compute_chamfer(&l1, click1, self.dist1, &l2, click, self.dist2) {
@@ -2743,22 +2987,38 @@ impl CadCommand for ChamferCommand {
                             // No-trim keeps both source lines and adds only the
                             // derived chamfer line.
                             if !self.trim {
-                                return self.continue_after_addition(chamfer_line);
+                                return match chamfer_line {
+                                    Some(line) => self.continue_after_addition(line),
+                                    None => {
+                                        self.step = ChamferStep::First;
+                                        CmdResult::ReportError(NO_TRIM_CHAMFER_ZERO.into())
+                                    }
+                                };
                             }
+                            let new_l1 = restore_infinite(
+                                self.entity_index.get(&self.all_entities, h1),
+                                new_l1,
+                            );
+                            let new_l2 = restore_infinite(
+                                self.entity_index.get(&self.all_entities, handle),
+                                new_l2,
+                            );
                             // Single mode adds the chamfer line as a new entity;
                             // Multiple folds it into the first line's replacement
                             // so the command can carry on.
+                            let mut first = vec![new_l1];
                             if self.multiple {
-                                self.commit(vec![
-                                    (h1, vec![new_l1, chamfer_line]),
-                                    (handle, vec![new_l2]),
-                                ])
+                                first.extend(chamfer_line);
+                                self.commit(vec![(h1, first), (handle, vec![new_l2])])
                             } else {
                                 CmdResult::ReplaceMany(
-                                    vec![(h1, vec![new_l1]), (handle, vec![new_l2])],
-                                    vec![chamfer_line],
+                                    vec![(h1, first), (handle, vec![new_l2])],
+                                    chamfer_line.into_iter().collect(),
                                 )
                             }
+                        }
+                        None if !lines_parallel(&l1, &l2) => {
+                            CmdResult::ReportError(t!("Distance is too large.").into_owned())
                         }
                         None => CmdResult::NeedPoint,
                     }
@@ -2786,9 +3046,8 @@ impl CadCommand for ChamferCommand {
                     .entity_index
                     .get(&self.all_entities, handle)
                     .and_then(|e| match e {
-                        EntityType::Line(l) => Some(line_pts(l)),
                         EntityType::LwPolyline(p) => Some(lwpoly_seg_hover_pts(p, click)),
-                        _ => None,
+                        other => line_or_infinite(other).map(|l| line_pts(&l)),
                     });
                 if let Some(pts) = pts {
                     vec![WireModel::solid(
@@ -2807,26 +3066,23 @@ impl CadCommand for ChamferCommand {
                 let l2 = self
                     .entity_index
                     .get(&self.all_entities, handle)
-                    .and_then(|e| {
-                        if let EntityType::Line(l) = e {
-                            Some(l.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .and_then(line_or_infinite);
                 if let Some(l2) = l2 {
                     if let Some((new_l1, new_l2, cline)) =
                         compute_chamfer(&l1, click1, self.dist1, &l2, click, self.dist2)
                     {
-                        if !self.trim {
-                            return vec![WireModel::solid(
+                        let cut = cline.map(|cline| {
+                            WireModel::solid(
                                 "chamfer_line".into(),
                                 entity_pts(&cline),
                                 WireModel::CYAN,
                                 false,
-                            )];
+                            )
+                        });
+                        if !self.trim {
+                            return cut.into_iter().collect();
                         }
-                        return vec![
+                        let mut wires = vec![
                             WireModel::solid(
                                 "chamfer_l1".into(),
                                 entity_pts(&new_l1),
@@ -2839,13 +3095,9 @@ impl CadCommand for ChamferCommand {
                                 WireModel::CYAN,
                                 false,
                             ),
-                            WireModel::solid(
-                                "chamfer_line".into(),
-                                entity_pts(&cline),
-                                WireModel::CYAN,
-                                false,
-                            ),
                         ];
+                        wires.extend(cut);
+                        return wires;
                     }
                 }
                 vec![]
@@ -2876,6 +3128,10 @@ impl CadCommand for ChamferCommand {
         CmdResult::NeedPoint
     }
     fn on_enter(&mut self) -> CmdResult {
+        // Enter at the distance prompts accepts its default.
+        if self.wants_text_input() {
+            return self.on_text_input("").unwrap_or(CmdResult::NeedPoint);
+        }
         CmdResult::Cancel
     }
     fn on_escape(&mut self) -> CmdResult {
@@ -2907,7 +3163,7 @@ mod tests {
     /// by an infinite factor: the center becomes (inf, NaN).
     fn overflowed_arc(sweep_sign: f64) -> ArcEnt {
         let mut arc = ArcEnt::new();
-        arc.center = codec::types::Vector3::new(f64::INFINITY, f64::NAN, 0.0);
+        arc.center = document::types::Vector3::new(f64::INFINITY, f64::NAN, 0.0);
         arc.radius = f64::INFINITY;
         arc.start_angle = 0.0;
         arc.end_angle = sweep_sign * std::f64::consts::PI;
@@ -2945,11 +3201,88 @@ mod tests {
         ));
         assert_eq!(keywords(&command), ["P", "R", "T"]);
         // The host hands the restored document back; the cache follows it.
-        let mut doc = codec::CadDocument::new();
+        let mut doc = document::Document::new();
         let _ = doc.add_entity(line(0.0, 0.0, 20.0, 0.0, 7));
         command.on_document_undone(&doc);
         assert_eq!(command.all_entities.len(), 1);
         assert_eq!(command.all_entities[0].common().handle, Handle::new(7));
+    }
+
+    /// Filleting two open polylines at their end segments joins them into
+    /// one polyline through the fillet arc, as the reference does (#1422).
+    #[test]
+    fn fillet_joins_two_polylines_into_one() {
+        let polyline = |handle: u64, points: &[[f64; 2]]| {
+            let mut p = LwPolyline::new();
+            for &[x, y] in points {
+                p.add_point(document::types::Vector2::new(x, y));
+            }
+            p.common.handle = Handle::new(handle);
+            EntityType::LwPolyline(p)
+        };
+        let first = [[0.0, 10.0], [0.0, 3.0]];
+        // The fillet on the second one's end segment, or on a middle one:
+        // the part past the fillet point is dropped.
+        let seconds: [&[[f64; 2]]; 2] = [
+            &[[3.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
+            &[[3.0, -5.0], [3.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
+        ];
+        // Each polyline drawn either way round.
+        for (second, flip_first, flip_second) in seconds.iter().flat_map(|second| {
+            [(false, false), (true, false), (false, true), (true, true)]
+                .map(|(a, b)| (*second, a, b))
+        }) {
+            let mut a = first.to_vec();
+            let mut b = second.to_vec();
+            if flip_first {
+                a.reverse();
+            }
+            if flip_second {
+                b.reverse();
+            }
+            let all = vec![polyline(1, &a), polyline(2, &b)];
+            let mut command = FilletCommand::new(1.0, all);
+            let _ = command.on_entity_pick(Handle::new(1), DVec3::new(0.0, 6.0, 0.0));
+            let CmdResult::ReplaceMany(replacements, _) =
+                command.on_entity_pick(Handle::new(2), DVec3::new(6.0, 0.0, 0.0))
+            else {
+                panic!("FILLET should replace the polylines");
+            };
+            let joined = replacements
+                .iter()
+                .find(|(handle, _)| *handle == Handle::new(1))
+                .expect("the first polyline is replaced");
+            assert!(replacements
+                .iter()
+                .any(|(handle, entities)| *handle == Handle::new(2) && entities.is_empty()));
+            let [EntityType::LwPolyline(p)] = joined.1.as_slice() else {
+                panic!("one polyline");
+            };
+            let points: Vec<[f64; 2]> =
+                p.vertices.iter().map(|v| [v.location.x, v.location.y]).collect();
+            let mut expected = vec![[0.0, 10.0], [0.0, 1.0], [1.0, 0.0], [10.0, 0.0], [10.0, 5.0]];
+            // The polyline runs whichever way the first one ran.
+            let fillet_start = if flip_first {
+                expected.reverse();
+                2
+            } else {
+                1
+            };
+            assert_eq!(points.len(), expected.len(), "{flip_first} {flip_second}: {points:?}");
+            for (got, want) in points.iter().zip(&expected) {
+                assert!(
+                    (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+                    "{flip_first} {flip_second}: {points:?}"
+                );
+            }
+            // Only the fillet segment is curved, turning the same way both ways.
+            for (k, v) in p.vertices.iter().enumerate() {
+                let curved = v.bulge.abs() > 1e-12;
+                assert_eq!(curved, k == fillet_start, "{flip_first} {flip_second}: {k}");
+            }
+            let turn = p.vertices[fillet_start].bulge.signum();
+            assert_eq!(turn, if flip_first { -1.0 } else { 1.0 }, "{flip_first} {flip_second}");
+        }
     }
 
     #[test]
@@ -3127,9 +3460,9 @@ mod tests {
         }
 
         let mut poly = LwPolyline::new();
-        poly.add_point(codec::types::Vector2::new(0.0, 0.0));
-        poly.add_point(codec::types::Vector2::new(10.0, 0.0));
-        poly.add_point(codec::types::Vector2::new(10.0, 10.0));
+        poly.add_point(document::types::Vector2::new(0.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 10.0));
         poly.common.handle = Handle::new(3);
         let mut command = ChamferCommand::new(1.0, vec![EntityType::LwPolyline(poly)]);
         command.trim = false;
@@ -3138,6 +3471,170 @@ mod tests {
             CmdResult::ReportError(_)
         ));
         assert!(matches!(command.step, ChamferStep::First));
+    }
+
+    /// Two lines that stop short of their shared corner at the origin.
+    fn open_corner() -> Vec<EntityType> {
+        vec![line(2.0, 0.0, 10.0, 0.0, 1), line(0.0, 2.0, 0.0, 10.0, 2)]
+    }
+
+    fn assert_meets_origin(entity: &EntityType) {
+        let EntityType::Line(l) = entity else {
+            panic!("expected a line, got {entity:?}")
+        };
+        let at_origin = |v: &Vector3| v.x.abs() < 1e-9 && v.y.abs() < 1e-9;
+        assert!(
+            at_origin(&l.start) || at_origin(&l.end),
+            "line should reach the corner: {:?} -> {:?}",
+            l.start,
+            l.end
+        );
+        let len = (l.end.x - l.start.x).hypot(l.end.y - l.start.y);
+        assert!(len > 1.0, "source line must keep its length");
+    }
+
+    #[test]
+    fn zero_distance_chamfer_closes_the_corner_without_a_zero_length_line() {
+        let mut single = ChamferCommand::new(0.0, open_corner());
+        single.dist2 = 0.0;
+        single.on_entity_pick(Handle::new(1), DVec3::new(5.0, 0.0, 0.0));
+        match single.on_entity_pick(Handle::new(2), DVec3::new(0.0, 5.0, 0.0)) {
+            CmdResult::ReplaceMany(replacements, additions) => {
+                assert!(additions.is_empty(), "no chamfer line: {additions:?}");
+                assert_eq!(replacements.len(), 2);
+                for (_, entities) in &replacements {
+                    assert_eq!(entities.len(), 1);
+                    assert_meets_origin(&entities[0]);
+                }
+            }
+            _ => panic!("zero-distance CHAMFER should replace both lines"),
+        }
+
+        let mut multi = ChamferCommand::new(0.0, open_corner());
+        multi.dist2 = 0.0;
+        multi.on_text_input("M");
+        multi.on_entity_pick(Handle::new(1), DVec3::new(5.0, 0.0, 0.0));
+        match multi.on_entity_pick(Handle::new(2), DVec3::new(0.0, 5.0, 0.0)) {
+            CmdResult::ReplaceManyContinue(replacements) => {
+                assert_eq!(replacements.len(), 2);
+                for (_, entities) in &replacements {
+                    assert_eq!(entities.len(), 1, "no chamfer line rides along");
+                    assert_meets_origin(&entities[0]);
+                }
+            }
+            _ => panic!("multiple zero-distance CHAMFER should keep running"),
+        }
+    }
+
+    #[test]
+    fn zero_distance_no_trim_chamfer_adds_nothing() {
+        let mut command = ChamferCommand::new(0.0, open_corner());
+        command.dist2 = 0.0;
+        command.trim = false;
+        command.on_entity_pick(Handle::new(1), DVec3::new(5.0, 0.0, 0.0));
+        match command.on_entity_pick(Handle::new(2), DVec3::new(0.0, 5.0, 0.0)) {
+            CmdResult::ReportError(message) => assert_eq!(message, NO_TRIM_CHAMFER_ZERO),
+            _ => panic!("zero-distance no-trim CHAMFER should report an error"),
+        }
+        assert!(matches!(command.step, ChamferStep::First));
+        assert_eq!(command.all_entities.len(), 2, "nothing was added");
+    }
+
+    fn wire_names(wires: &[WireModel]) -> Vec<&str> {
+        wires.iter().map(|w| w.name.as_str()).collect()
+    }
+
+    #[test]
+    fn chamfer_preview_shows_a_cut_line_only_for_nonzero_distances() {
+        let preview = |dist: f64, trim: bool| {
+            let mut command = ChamferCommand::new(dist, open_corner());
+            command.dist2 = dist;
+            command.trim = trim;
+            command.on_entity_pick(Handle::new(1), DVec3::new(5.0, 0.0, 0.0));
+            assert!(matches!(command.step, ChamferStep::Second { .. }));
+            command.on_hover_entity(Handle::new(2), DVec3::new(0.0, 5.0, 0.0))
+        };
+        assert_eq!(wire_names(&preview(0.0, true)), ["chamfer_l1", "chamfer_l2"]);
+        assert!(wire_names(&preview(0.0, false)).is_empty());
+        assert_eq!(
+            wire_names(&preview(1.0, true)),
+            ["chamfer_l1", "chamfer_l2", "chamfer_line"]
+        );
+        assert_eq!(wire_names(&preview(1.0, false)), ["chamfer_line"]);
+    }
+
+    #[test]
+    fn zero_radius_polyline_fillet_keeps_a_single_corner_vertex() {
+        let mut poly = LwPolyline::new();
+        poly.add_point(document::types::Vector2::new(0.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 10.0));
+        poly.common.handle = Handle::new(3);
+        let assert_sharp_corner = |out: &LwPolyline| {
+            let points: Vec<[f64; 2]> =
+                out.vertices.iter().map(|v| [v.location.x, v.location.y]).collect();
+            assert_eq!(points.len(), 3, "no duplicate corner vertex: {points:?}");
+            for (got, want) in points.iter().zip([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]) {
+                assert!(
+                    (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+                    "{points:?}"
+                );
+            }
+            assert!(out.vertices.iter().all(|v| v.bulge.abs() < 1e-12));
+        };
+
+        // The corner rebuild itself, before the command's zero-length cleanup.
+        let h = Handle::new(3);
+        let e1 = FilletEntity::from_lwpoly(&poly, h, [5.0, 0.0]);
+        let e2 = FilletEntity::from_lwpoly(&poly, h, [10.0, 5.0]);
+        let Some((EntityType::LwPolyline(rebuilt), _, None)) =
+            compute_fillet_entities(&e1, [5.0, 0.0], &e2, [10.0, 5.0], 0.0)
+        else {
+            panic!("zero-radius polyline corner fillet should rebuild the polyline")
+        };
+        assert_sharp_corner(&rebuilt);
+
+        // Through the public command.
+        let mut command = FilletCommand::new(0.0, vec![EntityType::LwPolyline(poly)]);
+        assert!(matches!(
+            command.on_entity_pick(h, DVec3::new(5.0, 0.0, 0.0)),
+            CmdResult::NeedPoint
+        ));
+        match command.on_entity_pick(h, DVec3::new(10.0, 5.0, 0.0)) {
+            CmdResult::ReplaceMany(replacements, additions) => {
+                assert!(additions.is_empty(), "{additions:?}");
+                assert_eq!(replacements.len(), 1);
+                assert_eq!(replacements[0].0, h);
+                let [EntityType::LwPolyline(out)] = replacements[0].1.as_slice() else {
+                    panic!("one polyline and no fillet arc: {:?}", replacements[0].1)
+                };
+                assert_sharp_corner(out);
+            }
+            _ => panic!("zero-radius FILLET should replace the polyline"),
+        }
+    }
+
+    #[test]
+    fn zero_distance_polyline_corner_keeps_a_single_vertex() {
+        let mut poly = LwPolyline::new();
+        poly.add_point(document::types::Vector2::new(0.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 0.0));
+        poly.add_point(document::types::Vector2::new(10.0, 10.0));
+        let Some(EntityType::LwPolyline(out)) =
+            chamfer_lwpoly_corner(&poly, [5.0, 0.0], 0.0, [10.0, 5.0], 0.0)
+        else {
+            panic!("zero-distance polyline chamfer should succeed")
+        };
+        assert_eq!(out.vertices.len(), 3, "no duplicate corner vertex");
+        assert!((out.vertices[1].location.x - 10.0).abs() < 1e-9);
+        assert!(out.vertices[1].location.y.abs() < 1e-9);
+
+        let Some(EntityType::LwPolyline(cut)) =
+            chamfer_lwpoly_corner(&poly, [5.0, 0.0], 1.0, [10.0, 5.0], 1.0)
+        else {
+            panic!("polyline chamfer should succeed")
+        };
+        assert_eq!(cut.vertices.len(), 4, "a real chamfer still adds its edge");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::app::Message;
-use codec::{CadDocument, Handle};
+use document::{Document, Handle};
 use iced::{
     widget::{button, checkbox, column, container, row, scrollable, text, Space},
     Element, Fill,
@@ -16,7 +16,7 @@ pub(crate) struct Row {
 pub(crate) struct State {
     pub document: u64,
     pub definition: Handle,
-    pub expected: Vec<(Handle, codec::objects::ObjectType)>,
+    pub expected: Vec<(Handle, document::objects::ObjectType)>,
     pub rows: Vec<Row>,
     pub error: Option<String>,
     pub selected: Option<usize>,
@@ -26,7 +26,7 @@ impl State {
     pub(crate) fn new(
         document: u64,
         definition: Handle,
-        doc: &CadDocument,
+        doc: &Document,
     ) -> Result<Self, &'static str> {
         let grips = crate::scene::block_grips::grips(doc, definition)?;
         let expected = grips

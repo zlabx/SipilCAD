@@ -3,11 +3,52 @@ use super::*;
 use crate::scene::Scene;
 use rustc_hash::FxHashMap;
 
+fn sync_nested_cache(
+    doc: &mut Document,
+    source: Handle,
+    target: Handle,
+    mapping: &FxHashMap<Handle, Handle>,
+) -> Result<(), &'static str> {
+    const KEY: &str = "AcDbBlockRepresentation";
+    let Some(source_root) = doc.extension_dictionary_handle(source) else {
+        return Ok(());
+    };
+    let Some(source_cache) = instance::entry(doc, source_root, KEY)? else {
+        return Ok(());
+    };
+    let target_root = doc.ensure_extension_dictionary(target);
+    if doc.object_owner(source_root) != Some(source)
+        || doc.object_owner(source_cache) != Some(source_root)
+        || doc.object_owner(target_root) != Some(target)
+    {
+        return Err("The reference parameter dictionary has an invalid owner.");
+    }
+    let old = instance::entry(doc, target_root, KEY)?;
+    let cache = Scene::clone_xdict_tree(
+        doc,
+        source_root,
+        source_cache,
+        target_root,
+        mapping,
+        &FxHashMap::default(),
+        &mut vec![],
+    )
+    .ok_or("Could not copy the new member's extension dictionary.")?;
+    let Some(ObjectType::Dictionary(dictionary)) = doc.objects.get_mut(&target_root) else {
+        return Err("The reference contains an invalid parameter dictionary.");
+    };
+    dictionary.insert(KEY, cache);
+    if let Some(old) = old.filter(|&old| doc.object_owner(old) == Some(target_root)) {
+        instance::remove_owned_cache(doc, old);
+    }
+    Ok(())
+}
+
 pub(super) fn reconcile(
     scene: &mut Scene,
     def: Handle,
     name: &str,
-    evaluated: &CadDocument,
+    evaluated: &Document,
 ) -> Result<(), &'static str> {
     authoring::tag_members(&mut scene.document, def);
     let rep = scene
@@ -63,6 +104,7 @@ pub(super) fn reconcile(
             .cloned()
             .ok_or("Missing evaluated member.")?;
         let source_xdict = entity.common().xdictionary_handle;
+        let mut changed_insert = None;
         if existing {
             let previous = scene
                 .document
@@ -72,6 +114,9 @@ pub(super) fn reconcile(
             let current = previous.common();
             match (&mut entity, &previous) {
                 (EntityType::Insert(insert), EntityType::Insert(old)) => {
+                    if insert.block_name != old.block_name {
+                        changed_insert = Some((old.block_name.clone(), insert.block_name.clone()));
+                    }
                     let mut used = std::collections::BTreeSet::new();
                     for attribute in &mut insert.attributes {
                         let retained = old.attributes.iter().find(|a| {
@@ -136,6 +181,15 @@ pub(super) fn reconcile(
         entity.common_mut().raw_record = None;
         if existing {
             *scene.document.get_entity_mut(to).unwrap() = entity;
+            if let Some((old, name)) = changed_insert {
+                let old = scene.document.block_records.get(&old).map_or(Handle::NULL, |b| b.handle);
+                if let Some(new) = scene.document.block_records.get(&name).map(|b| b.handle) {
+                    scene.repoint_representation(to, old, new, &name);
+                    if scene.document.dynamic_definition_for_insert(from).is_some_and(|def| def != new) {
+                        sync_nested_cache(&mut scene.document, from, to, &mapping)?;
+                    }
+                }
+            }
         } else {
             scene
                 .document
@@ -194,16 +248,21 @@ pub(super) fn reconcile(
         .get_mut(name)
         .unwrap()
         .entity_handles = ordered;
-    // Keep the anonymous block's native base point in step with its definition.
-    let source_name = scene
-        .document
+    // New members were allocated above the terminator written with the
+    // representation; keep it after the members the record now lists. A
+    // representation loaded without one gains it here.
+    scene
+        .reterminate_block_definition(name)
+        .map_err(|_| "Could not re-terminate the representation.")?;
+    // A Stretch action can move the evaluated Base Point for this reference.
+    let source_name = evaluated
         .block_records
         .iter()
         .find(|b| b.handle == def)
         .unwrap()
         .name
-        .clone();
-    let base = crate::scene::render_graph::block_base_point(&scene.document, &source_name);
+        .as_str();
+    let base = crate::scene::render_graph::block_base_point(evaluated, source_name);
     let marker = scene
         .document
         .block_records
@@ -222,7 +281,7 @@ pub(super) fn reconcile(
     Ok(())
 }
 
-fn state_name(doc: &CadDocument, def: Handle, insert: Handle) -> Option<(String, usize)> {
+fn state_name(doc: &Document, def: Handle, insert: Handle) -> Option<(String, usize)> {
     let parameter = crate::scene::block_visibility::parameter(doc, def)?;
     let EntityType::Insert(reference) = doc.get_entity(insert)? else {
         return None;
@@ -248,8 +307,8 @@ fn state_name(doc: &CadDocument, def: Handle, insert: Handle) -> Option<(String,
 }
 
 pub(super) fn visibility_state(
-    doc: &CadDocument,
-    before: &CadDocument,
+    doc: &Document,
+    before: &Document,
     def: Handle,
     insert: Handle,
 ) -> Option<usize> {
@@ -265,7 +324,7 @@ pub(super) fn visibility_state(
 }
 
 pub(super) fn apply_visibility(
-    doc: &mut CadDocument,
+    doc: &mut Document,
     def: Handle,
     insert: Handle,
     state: usize,

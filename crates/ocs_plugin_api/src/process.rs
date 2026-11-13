@@ -8,7 +8,7 @@
 //! 2. The runner presents a pre-shared token via [`crate::ipc::protocol::PLUGIN_TOKEN_ENV`];
 //!    the host rejects the connection on mismatch.
 //! 3. The host requests the manifest, checks `api_version` and (for v4+) the
-//!    opencadcodec source gate, then keeps the process alive.
+//!    document source gate, then keeps the process alive.
 //! 4. Host → plugin calls (`dispatch`, `execute_code`, interactive events) are
 //!    sent over the socket with a configurable per-call timeout.
 //! 5. Stdout/stderr of the child are drained into `PluginIoLine` records for
@@ -32,7 +32,7 @@ use crate::host::{
     CommandSource, CommandStep, ExecutionResult, HostApi, HostNotification, PluginNotification,
 };
 use crate::ipc::protocol::{
-    CadDocument, EntityType, Handle, HostRequest, HostResponse, HostToPlugin, InteractiveEvent,
+    Document, EntityType, Handle, HostRequest, HostResponse, HostToPlugin, InteractiveEvent,
     PluginToHost, RunnerHandshake, PLUGIN_TOKEN_ENV,
 };
 use crate::ipc::server::handle_plugin_request;
@@ -45,7 +45,7 @@ use std::sync::Arc;
 
 mod manager;
 mod v4;
-pub use manager::{DispatchResult, NotificationHandler, PluginManager};
+pub use manager::{AttachOutcome, DispatchResult, NotificationHandler, PluginManager};
 
 /// A line emitted by a plugin process on stdout or stderr.
 #[derive(Debug, Clone)]
@@ -76,17 +76,25 @@ impl std::fmt::Display for IoStream {
 
 /// A dummy `HostApi` used for V4 paths that do not supply a real host surface
 /// (e.g., interactive events). Nested plugin requests receive safe defaults.
-struct NullHost;
+#[derive(Default)]
+struct NullHost {
+    scratch_doc: Option<Document>,
+}
 
 impl HostApi for NullHost {
     fn tab_index(&self) -> usize {
         0
     }
-    fn document(&self) -> &CadDocument {
-        panic!("NullHost: document not available")
+    fn document(&self) -> &Document {
+        if let Some(doc) = &self.scratch_doc {
+            doc
+        } else {
+            static NULL_DOC: std::sync::OnceLock<Document> = std::sync::OnceLock::new();
+            NULL_DOC.get_or_init(Document::new)
+        }
     }
-    fn document_mut(&mut self) -> &mut CadDocument {
-        panic!("NullHost: document_mut not available")
+    fn document_mut(&mut self) -> &mut Document {
+        self.scratch_doc.get_or_insert_with(Document::new)
     }
     fn document_reader(&self) -> Box<dyn crate::host::DocumentReader + '_> {
         Box::new(NullReader)
@@ -170,7 +178,12 @@ macro_rules! vlog {
 }
 
 /// Maximum time to wait for the plugin runner to connect back to the host.
-const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
+///
+/// The host spawns itself (a 100+ MB executable) as the runner, and an
+/// antivirus scan of that image can take longer than 30 s on Windows. A
+/// runner slowed that way is healthy, so the wait is 90 s;
+/// `OCS_PLUGIN_SPAWN_TIMEOUT_SECS` overrides it.
+const SPAWN_TIMEOUT: Duration = Duration::from_secs(90);
 
 fn spawn_timeout() -> Duration {
     std::env::var("OCS_PLUGIN_SPAWN_TIMEOUT_SECS")
@@ -253,6 +266,7 @@ pub(crate) fn request_kind(req: &HostRequest) -> &'static str {
             crate::host::CustomGripPhase::Settle => "CustomGripSettle",
             crate::host::CustomGripPhase::Cancel => "CustomGripCancel",
         },
+        HostRequest::GetModalDialog { .. } => "GetModalDialog",
         HostRequest::Shutdown => "Shutdown",
     }
 }
@@ -319,6 +333,10 @@ impl PluginProcess {
             .arg(&socket_name)
             .arg(cdylib_path)
             .env(PLUGIN_TOKEN_ENV, &token)
+            .env(
+                crate::version_info::WIRE_SCHEMA_ENV,
+                crate::version_info::wire_schema(),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -692,7 +710,7 @@ impl PluginProcess {
     ) -> Result<CommandStep, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::InteractiveEvent { command_id, event },
                 &mut |_| {},
             )?;
@@ -719,7 +737,7 @@ impl PluginProcess {
             return Ok(());
         };
         match v4.call(
-            &mut NullHost,
+            &mut NullHost::default(),
             HostRequest::DropInteractive { command_id },
             &mut |_| {},
         )? {
@@ -732,7 +750,7 @@ impl PluginProcess {
     pub fn get_prompt(&self, command_id: u64) -> Result<String, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::GetPrompt { command_id },
                 &mut |_| {},
             )?;
@@ -757,7 +775,7 @@ impl PluginProcess {
     pub fn needs_entity_pick(&self, command_id: u64) -> Result<bool, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::NeedsEntityPick { command_id },
                 &mut |_| {},
             )?;
@@ -782,7 +800,7 @@ impl PluginProcess {
     pub fn is_selection_gathering(&self, command_id: u64) -> Result<bool, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::IsSelectionGathering { command_id },
                 &mut |_| {},
             )?;
@@ -807,7 +825,7 @@ impl PluginProcess {
     pub fn accepts_drag_selection(&self, command_id: u64) -> Result<bool, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::AcceptsDragSelection { command_id },
                 &mut |_| {},
             )?;
@@ -832,7 +850,7 @@ impl PluginProcess {
     pub fn selection_rejects_locked_layers(&self, command_id: u64) -> Result<bool, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::SelectionRejectsLockedLayers { command_id },
                 &mut |_| {},
             )?;
@@ -861,7 +879,7 @@ impl PluginProcess {
     ) -> Result<Vec<crate::host::PreviewWire>, PluginError> {
         if let Some(v4) = &self.v4 {
             let resp = v4.call(
-                &mut NullHost,
+                &mut NullHost::default(),
                 HostRequest::CursorMove { command_id, pt },
                 &mut |_| {},
             )?;
@@ -876,6 +894,34 @@ impl PluginProcess {
                 "cursor_move",
                 |resp| match resp {
                     HostResponse::PreviewWires(w) => Ok(w),
+                    other => Err(Box::new(other)),
+                },
+            )
+        }
+    }
+
+    /// Ask the plugin process whether an interactive command has an active modal dialog.
+    pub fn get_modal_dialog(
+        &self,
+        command_id: u64,
+    ) -> Result<Option<crate::dialog::DialogDef>, PluginError> {
+        if let Some(v4) = &self.v4 {
+            let resp = v4.call(
+                &mut NullHost::default(),
+                HostRequest::GetModalDialog { command_id },
+                &mut |_| {},
+            )?;
+            match resp {
+                HostResponse::ModalDialog(d) => Ok(d),
+                other => Err(PluginError::UnexpectedResponse(Box::new(other))),
+            }
+        } else {
+            self.call_simple(
+                HostRequest::GetModalDialog { command_id },
+                "GetModalDialog",
+                "get_modal_dialog",
+                |resp| match resp {
+                    HostResponse::ModalDialog(d) => Ok(d),
                     other => Err(Box::new(other)),
                 },
             )
@@ -1400,7 +1446,7 @@ mod tests {
 
     #[test]
     fn null_host_ensure_plugin_state_does_not_panic() {
-        let mut null = NullHost;
+        let mut null = NullHost::default();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = null.ensure_plugin_state_any("opencad.demo", &mut || Box::new(7u32));
         }));
@@ -1426,8 +1472,8 @@ mod timeout_tests {
     use crate::ipc::transport::{recv, send};
     use crate::ribbon::owned::OwnedPluginManifest;
     use crate::test_lock::ENV_LOCK;
-    use codec::xdata::ExtendedDataRecord;
-    use codec::{CadDocument, EntityType, Handle};
+    use document::xdata::ExtendedDataRecord;
+    use document::{Document, EntityType, Handle};
     use interprocess::local_socket::{
         traits::{Listener, Stream as StreamTrait},
         GenericNamespaced, ListenerOptions, Stream, ToNsName,
@@ -1453,12 +1499,12 @@ mod timeout_tests {
     }
 
     struct DummyHost {
-        doc: CadDocument,
+        doc: Document,
         push_info_messages: StdMutex<Vec<String>>,
     }
 
     impl DummyHost {
-        fn new(doc: CadDocument) -> Self {
+        fn new(doc: Document) -> Self {
             Self {
                 doc,
                 push_info_messages: StdMutex::new(Vec::new()),
@@ -1473,10 +1519,10 @@ mod timeout_tests {
         fn tab_index(&self) -> usize {
             0
         }
-        fn document(&self) -> &CadDocument {
+        fn document(&self) -> &Document {
             &self.doc
         }
-        fn document_mut(&mut self) -> &mut CadDocument {
+        fn document_mut(&mut self) -> &mut Document {
             &mut self.doc
         }
         fn document_reader(&self) -> Box<dyn DocumentReader + '_> {
@@ -1618,7 +1664,7 @@ mod timeout_tests {
             let _ = recv::<HostToPlugin>(&mut peer);
         });
 
-        let mut host = DummyHost::new(CadDocument::default());
+        let mut host = DummyHost::new(Document::default());
         let start = Instant::now();
         let result = process.dispatch(&mut host, "HANG", &mut |_| {});
         let elapsed = start.elapsed();
@@ -1683,7 +1729,7 @@ mod timeout_tests {
                 .expect("send final response");
         });
 
-        let mut host = DummyHost::new(CadDocument::default());
+        let mut host = DummyHost::new(Document::default());
         let result = process.dispatch(&mut host, "NESTED", &mut |_| {});
         assert!(result.expect("dispatch succeeds"));
         assert!(process.is_alive(), "process should still be alive");
@@ -1789,5 +1835,14 @@ mod timeout_tests {
             "expected V4 disabled error, got {result:?}"
         );
         std::env::remove_var("OCS_PLUGIN_MAX_API_VERSION");
+    }
+
+    #[test]
+    fn null_host_document_does_not_panic() {
+        let mut host = NullHost::default();
+        let doc = host.document();
+        assert!(!doc.layers.is_empty());
+        let doc_mut = host.document_mut();
+        assert!(!doc_mut.layers.is_empty());
     }
 }

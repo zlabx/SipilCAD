@@ -1,6 +1,6 @@
 //! Coordinates and feature identity shared by viewport acquisition and dimensions.
 
-use codec::types::Handle;
+use document::types::Handle;
 use glam::{DMat3, DVec2, DVec3};
 
 use crate::command::DimensionAssociationSource;
@@ -196,8 +196,8 @@ impl MeasurementScale {
     /// scale. Standard DIMLFAC still carries the full factor for other readers.
     pub const APP_ID: &'static str = "OCS_VIEWPORT_MEASUREMENT";
 
-    pub fn read(data: &codec::xdata::ExtendedData) -> Option<Self> {
-        use codec::xdata::XDataValue;
+    pub fn read(data: &document::xdata::ExtendedData) -> Option<Self> {
+        use document::xdata::XDataValue;
         let record = data.get_record(Self::APP_ID)?;
         let [XDataValue::Integer16(1), XDataValue::Real(user), XDataValue::Real(compensation)] =
             record.values.as_slice()
@@ -213,28 +213,32 @@ impl MeasurementScale {
         })
     }
 
-    pub fn write_to_entity(self, entity: &mut codec::EntityType) {
-        use codec::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
+    pub fn write_to_entity(self, entity: &mut document::EntityType) {
+        use document::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
         crate::entities::dim_override::set_on_entity(
             entity,
             crate::entities::dim_override::DIMLFAC,
             Some(XDataValue::Real(-self.paper_factor())),
         );
         let common = entity.common_mut();
-        let mut data = ExtendedData::new();
-        for record in common
-            .extended_data
-            .records()
-            .iter()
-            .filter(|r| r.application_name != Self::APP_ID)
-        {
-            data.add_record(record.clone());
-        }
         let mut record = ExtendedDataRecord::new(Self::APP_ID);
         record.add_value(XDataValue::Integer16(1));
         record.add_value(XDataValue::Real(self.user_lfac));
         record.add_value(XDataValue::Real(self.viewport_compensation));
-        data.add_record(record);
+        // In the old record's place, so an unchanged scale leaves the
+        // entity equal to what it was.
+        let mut record = Some(record);
+        let mut data = ExtendedData::new();
+        for existing in common.extended_data.records() {
+            if existing.application_name != Self::APP_ID {
+                data.add_record(existing.clone());
+            } else if let Some(record) = record.take() {
+                data.add_record(record);
+            }
+        }
+        if let Some(record) = record {
+            data.add_record(record);
+        }
         // Parsed records are authoritative after changing measurement data.
         common.extended_data = data;
     }

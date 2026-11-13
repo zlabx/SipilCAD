@@ -4,9 +4,9 @@
 // layer and with its properties: a lightweight polyline when the text lies
 // flat, a 3D polyline when it is tilted.
 
-use codec::entities::{LwPolyline, LwVertex, Polyline3D, Vertex3DPolyline};
-use codec::types::Vector2;
-use codec::{CadDocument, EntityType, Handle};
+use document::entities::{LwPolyline, LwVertex, Polyline3D, Vertex3DPolyline};
+use document::types::Vector2;
+use document::{Document, EntityType, Handle};
 
 use crate::scene::convert::acad_to_render::{convert, RenderObject};
 
@@ -14,7 +14,7 @@ use crate::scene::convert::acad_to_render::{convert, RenderObject};
 /// (text, polylines) pairs ready for `apply_explode_replacements`.
 pub fn plan_text_explode(
     selected: &[(Handle, &EntityType)],
-    document: &CadDocument,
+    document: &Document,
 ) -> Vec<(Handle, Vec<EntityType>)> {
     selected
         .iter()
@@ -26,7 +26,7 @@ pub fn plan_text_explode(
 }
 
 /// The character outlines of a TEXT or MTEXT; empty for anything else.
-pub fn text_outlines(entity: &EntityType, document: &CadDocument) -> Vec<EntityType> {
+pub fn text_outlines(entity: &EntityType, document: &Document) -> Vec<EntityType> {
     let (common, elevation) = match entity {
         EntityType::Text(text) => (&text.common, text.insertion_point.z),
         EntityType::MText(text) => (&text.common, text.insertion_point.z),

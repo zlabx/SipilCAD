@@ -31,6 +31,11 @@ impl OpenCADStudio {
                 .push_info(crate::t!("Select objects").as_ref());
             return;
         }
+        if self.any_entity_is_fixed(i, &handles) {
+            self.command_line
+                .push_error(crate::app::properties::HELD_BY_FIXED);
+            return;
+        }
 
         let bounds: Vec<_> = self.tabs[i]
             .scene
@@ -91,6 +96,9 @@ impl OpenCADStudio {
                 self.command_line
                     .push_output(crate::tf!("SELECTALL: {} object(s) selected.", count).as_ref());
                 self.refresh_properties();
+                // Same as SELECTSIMILAR: leave the command field so Ctrl+C
+                // reaches COPYCLIP.
+                return Some(self.unfocus_widgets());
             }
 
             "DESELECT" | "DESELALL" => {
@@ -100,11 +108,43 @@ impl OpenCADStudio {
                 self.refresh_properties();
             }
 
+            "SELECTPREVIOUS" => {
+                match self.tabs[i].scene.select_previous() {
+                    Some(count) => self.command_line.push_output(
+                        crate::tf!("SELECTPREVIOUS: {} object(s) selected.", count).as_ref(),
+                    ),
+                    None => self.command_line.push_error(
+                        crate::t!("SELECTPREVIOUS: no previous selection.").as_ref(),
+                    ),
+                }
+                self.refresh_properties();
+            }
+
+            "SELECTSIMILAR SETTINGS" | "SELECTSIMILAR SE" => {
+                self.select_similar_settings = Some(self.select_similar_mode);
+                self.active_modal = Some(crate::app::ModalKind::SelectSimilarSettings);
+                self.reset_modal_geometry();
+            }
+            "SELECTSIMILAR" | "SELSIM" if self.tabs[i].scene.selected.is_empty() => {
+                use crate::modules::draw::select::SelectObjectsCommand;
+                let command = SelectObjectsCommand::with_settings(
+                    "SELECTSIMILAR",
+                    "SELECTSIMILAR",
+                    "Select objects or [SEttings]:",
+                    || crate::command::CmdResult::Dispatch("SELECTSIMILAR SETTINGS".to_string()),
+                );
+                self.command_line.push_info(&command.prompt());
+                self.command_line.set_step_options(command.options());
+                self.tabs[i].active_cmd = Some(Box::new(command));
+            }
             "SELECTSIMILAR" | "SELSIM" => {
-                let added = self.tabs[i].scene.select_similar();
+                let added = self.tabs[i].scene.select_similar(self.select_similar_mode);
                 self.command_line
                     .push_output(crate::tf!("Select Similar: {} added.", added).as_ref());
                 self.refresh_properties();
+                // The completed selection belongs to the canvas; an empty
+                // focused command field would swallow the next Ctrl+C.
+                return Some(self.unfocus_widgets());
             }
 
             // ADDSELECTED — draw a new object of the same type as the selected
@@ -113,10 +153,19 @@ impl OpenCADStudio {
                 return Some(self.cmd_add_selected(i));
             }
 
-            // QSELECT builds a selection set by object type / property; FILTER is
-            // the same criteria-based selection.
-            "QSELECT" | "FILTER" => {
+            // QSELECT builds a selection set from one or a few conditions;
+            // FILTER is the advanced one, with groups and NOT (#2611).
+            "QSELECT" => {
                 return Some(Task::done(Message::QSelectOpen));
+            }
+            "FILTER" => {
+                return Some(Task::done(Message::FilterDialog(
+                    crate::app::filter_dialog::FilterMsg::Open(None),
+                )));
+            }
+            // FILTER <name>: a saved filter, applied without the dialog.
+            other if other.starts_with("FILTER ") => {
+                return Some(self.apply_saved_filter(&cmd["FILTER ".len()..]));
             }
 
             // CAL <expression> — evaluate an expression on the
@@ -125,6 +174,15 @@ impl OpenCADStudio {
             //   spaces inside the expression don't end the input.
             // QUICKCALC / QC show or hide the QuickCalc pallet.
             "QUICKCALC" | "QC" => return Some(self.toggle_quick_calc()),
+            // COMMANDHISTORY shows or hides the Command History pallet.
+            "COMMANDHISTORY" => {
+                let id = crate::ui::dock::PanelId::CommandHistory;
+                let open = !self.dock_panel_wanted(id);
+                if open {
+                    self.pallet_as_window(id);
+                }
+                return Some(self.dock_set_open(id, open));
+            }
             "CAL" => {
                 use crate::command::FreeTextValuePromptCommand;
                 let c = FreeTextValuePromptCommand::new("CAL", "CAL  expression  (e.g. (2+3)*4):");
@@ -158,6 +216,27 @@ impl OpenCADStudio {
                             .push_error(crate::tf!("CAL: {e}").as_ref()),
                     }
                 }
+            }
+
+            // ── SELECT — a selection set for the next command ─────────────
+            // Objects already selected are taken as they are; otherwise the
+            // prompt gathers them. Either way they stay selected and become
+            // the Previous set.
+            "SELECT" | "PSELECT" => {
+                let found = self.tabs[i].scene.selected.len();
+                if found == 0 {
+                    use crate::modules::draw::select::SelectObjectsCommand;
+                    let cmd = SelectObjectsCommand::routed("SELECT", "_SELECT_DONE");
+                    self.command_line.push_info(&cmd.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(cmd));
+                    return Some(Task::none());
+                }
+                self.command_line
+                    .push_output(crate::tf!("{found} found").as_ref());
+                self.tabs[i].prev_selection = self.tabs[i].scene.selected.iter().copied().collect();
+            }
+            "_SELECT_DONE" => {
+                self.tabs[i].prev_selection = self.tabs[i].scene.selected.iter().copied().collect();
             }
 
             // ── LIST — entity info ────────────────────────────────────────
@@ -235,7 +314,7 @@ impl OpenCADStudio {
                         *type_counts
                             .entry(crate::entities::names::dxf_name(e))
                             .or_default() += 1;
-                        if let codec::EntityType::Insert(ins) = e {
+                        if let document::EntityType::Insert(ins) = e {
                             *block_counts.entry(ins.block_name.clone()).or_default() += 1;
                         }
                     }
@@ -323,7 +402,7 @@ impl OpenCADStudio {
                 use crate::modules::draw::modify::join::JoinCommand;
                 // Pickfirst: with objects already selected, join them right
                 // away instead of asking for a selection again.
-                let selected: Vec<codec::Handle> =
+                let selected: Vec<document::Handle> =
                     self.tabs[i].scene.selected.iter().copied().collect();
                 if selected.len() >= 2 {
                     let task =
@@ -363,7 +442,7 @@ impl OpenCADStudio {
                     .filter_map(|e| {
                         let h = e.common().handle.value();
                         match e {
-                            codec::EntityType::LwPolyline(_) | codec::EntityType::Polyline2D(_) => {
+                            document::EntityType::LwPolyline(_) | document::EntityType::Polyline2D(_) => {
                                 Some((
                                     h,
                                     PeditTarget {
@@ -374,7 +453,7 @@ impl OpenCADStudio {
                                     },
                                 ))
                             }
-                            codec::EntityType::Line(_) | codec::EntityType::Arc(_) => Some((
+                            document::EntityType::Line(_) | document::EntityType::Arc(_) => Some((
                                 h,
                                 PeditTarget {
                                     is_poly: false,
@@ -383,7 +462,7 @@ impl OpenCADStudio {
                                     mesh_closed: None,
                                 },
                             )),
-                            codec::EntityType::PolygonMesh(mesh) => Some((
+                            document::EntityType::PolygonMesh(mesh) => Some((
                                 h,
                                 PeditTarget {
                                     is_poly: true,
@@ -401,7 +480,7 @@ impl OpenCADStudio {
                     .collect();
                 // Pickfirst: an already-selected polyline (or line/arc, via
                 // the convert prompt) skips the select step.
-                let preselected: Vec<codec::Handle> =
+                let preselected: Vec<document::Handle> =
                     self.tabs[i].scene.selected.iter().copied().collect();
                 let header = &self.tabs[i].scene.document.header;
                 let cmd_obj = PeditCommand::new(
@@ -422,12 +501,12 @@ impl OpenCADStudio {
                 let targets = document
                     .entities()
                     .filter_map(|entity| {
-                        let codec::EntityType::MLine(mline) = entity else {
+                        let document::EntityType::MLine(mline) = entity else {
                             return None;
                         };
                         let style = crate::entities::mline::resolved_mline_style(mline, document)
                             .cloned()
-                            .unwrap_or_else(codec::objects::MLineStyle::standard);
+                            .unwrap_or_else(document::objects::MLineStyle::standard);
                         Some((
                             entity.common().handle.value(),
                             MlineEditTarget {
@@ -448,7 +527,7 @@ impl OpenCADStudio {
                     SplineditCommand::new().with_delete_source(self.delete_objects != 0);
                 let selected: Vec<_> = self.tabs[i].scene.selected.iter().copied().collect();
                 if let [handle] = selected.as_slice() {
-                    if let Some(entity @ codec::EntityType::Spline(_)) =
+                    if let Some(entity @ document::EntityType::Spline(_)) =
                         self.tabs[i].scene.document.get_entity(*handle).cloned()
                     {
                         if self.reject_locked_edit(i, *handle) {
@@ -480,7 +559,7 @@ impl OpenCADStudio {
                     let selected: Vec<_> =
                         self.tabs[i].scene.selected_entities().into_iter().collect();
                     if selected.len() == 1 {
-                        if let Some(codec::EntityType::Insert(_)) = selected.first().map(|(_, e)| e)
+                        if let Some(document::EntityType::Insert(_)) = selected.first().map(|(_, e)| e)
                         {
                             let handle = selected[0].0;
                             let _ =
@@ -520,7 +599,7 @@ impl OpenCADStudio {
                 let pre_doc = self.tabs[i].scene.document.clone();
                 self.tabs[i].scene.define_block_raw(
                     &block_name,
-                    codec::types::Vector3::ZERO,
+                    document::types::Vector3::ZERO,
                     vec![],
                 );
                 let Some(record) = self.tabs[i].scene.document.block_records.get(&block_name)
@@ -538,7 +617,7 @@ impl OpenCADStudio {
                     );
                     return Some(Task::none());
                 }
-                use codec::Handle;
+                use document::Handle;
 
                 let block_name = if let Some(name) = cmd.strip_prefix("BEDIT_OPEN:") {
                     name.to_string()
@@ -549,7 +628,7 @@ impl OpenCADStudio {
                         return Some(Task::none());
                     }
                     match self.tabs[i].scene.document.get_entity(insert_handle) {
-                        Some(codec::EntityType::Insert(ins)) => {
+                        Some(document::EntityType::Insert(ins)) => {
                             // Evaluated INSERTs point at anonymous geometry variants.
                             // Their authoring graph belongs to the original definition.
                             let doc = &self.tabs[i].scene.document;
@@ -601,6 +680,24 @@ impl OpenCADStudio {
             }
 
             "BSAVE" => {
+                // The saved block reaches the recovery copy now rather than at
+                // the next SAVETIME tick, so a crash before leaving the editor
+                // keeps it.
+                #[cfg(not(target_arch = "wasm32"))]
+                if self.save_block_edit(i) {
+                    let target = self.autosave_target(i);
+                    let version = self.tabs[i].scene.document.version;
+                    return Some(self.queue_native_save(
+                        i,
+                        target,
+                        version,
+                        crate::app::SavePurpose::Autosave,
+                        crate::app::SaveContinuation::None,
+                        false,
+                        false,
+                    ));
+                }
+                #[cfg(target_arch = "wasm32")]
                 self.save_block_edit(i);
             }
             "BTESTBLOCK" => return Some(self.open_block_test(i)),
@@ -639,7 +736,7 @@ impl OpenCADStudio {
             "ALIGN" => {
                 use crate::modules::draw::modify::align::AlignCommand;
 
-                let selected: Vec<codec::Handle> =
+                let selected: Vec<document::Handle> =
                     self.tabs[i].scene.selected.iter().copied().collect();
 
                 let cmd = AlignCommand::with_selection(selected);
@@ -713,8 +810,8 @@ impl OpenCADStudio {
                             // where the kernel knows the shape, a fine mesh
                             // otherwise — not the display mesh.
                             let acis = match entity {
-                                codec::EntityType::Solid3D(solid) => Some(&solid.acis_data),
-                                codec::EntityType::Body(body) => Some(&body.acis_data),
+                                document::EntityType::Solid3D(solid) => Some(&solid.acis_data),
+                                document::EntityType::Body(body) => Some(&body.acis_data),
                                 _ => None,
                             };
                             if let Some(acis) = acis {
@@ -853,42 +950,28 @@ impl OpenCADStudio {
             }
 
             // ── QSELECT — quick-select entities by property ───────────────────
-            // QSELECT TYPE <type>          — select all entities of given type
-            // QSELECT LAYER <name>         — select all entities on layer
-            // QSELECT COLOR <n>            — select all entities with color index n
-            // QSELECT LINETYPE <name>      — select all entities with linetype
+            // QSELECT TYPE <type>            — select all entities of a type
+            // QSELECT LAYER <name>           — equality on any property
+            // QSELECT RADIUS >= 10           — compare a numeric property
+            // QSELECT NOT LINETYPE Hidden    — turn the whole test around
+            // Values take the dialog's wildcards (`*`, `?`, `#`, `~`, a
+            // comma-separated list). Bare QSELECT opens the dialog above.
             cmd if cmd == "QSELECT" || cmd.starts_with("QSELECT ") => {
                 let rest = cmd.split_once(' ').map(|(_, r)| r.trim()).unwrap_or("");
-                let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                let prop = parts.first().map(|s| s.to_uppercase()).unwrap_or_default();
-                let val = parts.get(1).map(|s| s.trim()).unwrap_or("").to_uppercase();
+                let filter = match crate::filter::qselect::parse_command_line(rest) {
+                    Ok(filter) => filter,
+                    Err(message) => {
+                        self.command_line.push_info(message);
+                        return Some(Task::none());
+                    }
+                };
+                let matched = self.tabs[i].scene.filter_matches(
+                    crate::app::QSelectScope::CurrentSpace,
+                    &filter,
+                    false,
+                );
 
-                let matched: Vec<codec::Handle> = self.tabs[i]
-                    .scene
-                    .document
-                    .entities()
-                    .filter(|e| {
-                        let c = e.common();
-                        match prop.as_str() {
-                            "TYPE" => crate::entities::names::dxf_name(e).to_uppercase() == val,
-                            "LAYER" => c.layer.to_uppercase() == val,
-                            "COLOR" => c
-                                .color
-                                .index()
-                                .map(|n| n.to_string() == val)
-                                .unwrap_or(val == "BYLAYER"),
-                            "LINETYPE" => c.linetype.to_uppercase() == val,
-                            _ => false,
-                        }
-                    })
-                    .map(|e| e.common().handle)
-                    .collect();
-
-                if prop.is_empty() {
-                    self.command_line.push_info(
-                        crate::t!("Usage: QSELECT TYPE|LAYER|COLOR|LINETYPE <value>").as_ref(),
-                    );
-                } else if matched.is_empty() {
+                if matched.is_empty() {
                     self.command_line
                         .push_output(crate::t!("QSELECT: no matching entities.").as_ref());
                 } else {
@@ -905,6 +988,23 @@ impl OpenCADStudio {
 
             "DATAEXTRACTION" | "EATTEXT" | "ATTEXT" => {
                 self.open_data_extraction();
+            }
+
+            // -DATAEXTRACTION: run a saved extraction from the command line.
+            "-DATAEXTRACTION" => {
+                let command = crate::modules::annotate::data_extract::TemplateCommand {
+                    drawing_dir: self.tabs[i]
+                        .current_path
+                        .as_deref()
+                        .and_then(std::path::Path::parent)
+                        .map(std::path::Path::to_path_buf),
+                };
+                self.command_line.push_info(&command.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(command));
+            }
+            cmd if cmd.starts_with("-DATAEXTRACTION _RUN ") => {
+                let path = cmd.trim_start_matches("-DATAEXTRACTION _RUN ").trim().to_string();
+                self.run_extraction_template(&path);
             }
 
             // ── Find / Replace ────────────────────────────────────────────────
@@ -942,7 +1042,7 @@ impl OpenCADStudio {
                 } else {
                     let search_lc = search.to_lowercase();
                     let mut count = 0usize;
-                    let handles: Vec<codec::Handle> = self.tabs[i]
+                    let handles: Vec<document::Handle> = self.tabs[i]
                         .scene
                         .document
                         .entities()
@@ -1028,8 +1128,8 @@ impl OpenCADStudio {
         &mut self,
         i: usize,
         block_name: String,
-        br_handle: codec::Handle,
-        unpersisted_pre_document: Option<codec::CadDocument>,
+        br_handle: document::Handle,
+        unpersisted_pre_document: Option<document::Document>,
     ) {
         if self.block_editor_preferences.locked {
             self.command_line.push_error(
@@ -1205,7 +1305,7 @@ impl OpenCADStudio {
                 // A dimension template also carries its dimension style, adopted
                 // as the current DIMSTYLE so the cloned dimension matches (#239).
                 match e {
-                    codec::EntityType::Dimension(d) => Some(d.base().style_name.clone()),
+                    document::EntityType::Dimension(d) => Some(d.base().style_name.clone()),
                     _ => None,
                 },
             )
@@ -1301,7 +1401,7 @@ impl OpenCADStudio {
             .layers
             .get(&layer)
             .map(|l| l.handle)
-            .unwrap_or(codec::types::Handle::NULL);
+            .unwrap_or(document::types::Handle::NULL);
         let lt_handle = self.tabs[i]
             .scene
             .document
@@ -1309,7 +1409,7 @@ impl OpenCADStudio {
             .iter()
             .find(|x| x.name.eq_ignore_ascii_case(&linetype))
             .map(|x| x.handle)
-            .unwrap_or(codec::types::Handle::NULL);
+            .unwrap_or(document::types::Handle::NULL);
         {
             let header = &mut self.tabs[i].scene.document.header;
             header.current_layer_name = layer.clone();
@@ -1330,7 +1430,7 @@ impl OpenCADStudio {
                 .iter()
                 .find(|s| s.name.eq_ignore_ascii_case(ds))
                 .map(|s| s.handle)
-                .unwrap_or(codec::types::Handle::NULL);
+                .unwrap_or(document::types::Handle::NULL);
             let header = &mut self.tabs[i].scene.document.header;
             header.current_dimstyle_name = ds.clone();
             header.current_dimstyle_handle = ds_handle;
@@ -1392,8 +1492,8 @@ impl OpenCADStudio {
 /// Map a template entity to the draw-command verb that creates the same kind of
 /// object, or `None` when there is no interactive creator for it. Used by
 /// ADDSELECTED (issue #239).
-fn add_selected_verb(entity: &codec::EntityType) -> Option<&'static str> {
-    use codec::EntityType;
+fn add_selected_verb(entity: &document::EntityType) -> Option<&'static str> {
+    use document::EntityType;
     Some(match entity {
         EntityType::Point(_) => "POINT",
         EntityType::Line(_) => "LINE",
@@ -1414,7 +1514,7 @@ fn add_selected_verb(entity: &codec::EntityType) -> Option<&'static str> {
         // Dimensions launch the matching dimension command by their stored type
         // (issue #239). Angular 2-line and 3-point both use DIMANGULAR.
         EntityType::Dimension(d) => {
-            use codec::entities::DimensionType;
+            use document::entities::DimensionType;
             match d.base().dimension_type {
                 DimensionType::Linear => "DIMLINEAR",
                 DimensionType::Aligned => "DIMALIGNED",
@@ -1430,10 +1530,10 @@ fn add_selected_verb(entity: &codec::EntityType) -> Option<&'static str> {
     })
 }
 
-fn entity_list_details(entity: &codec::EntityType) -> String {
+fn entity_list_details(entity: &document::EntityType) -> String {
     use std::f64::consts::PI;
     match entity {
-        codec::EntityType::Line(l) => crate::tf!(
+        document::EntityType::Line(l) => crate::tf!(
             "from ({:.4},{:.4},{:.4}) to ({:.4},{:.4},{:.4})  len={:.4}",
             l.start.x,
             l.start.y,
@@ -1447,7 +1547,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             .sqrt()
         )
         .into_owned(),
-        codec::EntityType::Circle(c) => crate::tf!(
+        document::EntityType::Circle(c) => crate::tf!(
             "center ({:.4},{:.4},{:.4})  r={:.4}  area={:.4}",
             c.center.x,
             c.center.y,
@@ -1456,7 +1556,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             PI * c.radius * c.radius
         )
         .into_owned(),
-        codec::EntityType::Arc(a) => crate::tf!(
+        document::EntityType::Arc(a) => crate::tf!(
             "center ({:.4},{:.4},{:.4})  r={:.4}  start={:.2}° end={:.2}°",
             a.center.x,
             a.center.y,
@@ -1466,7 +1566,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             a.end_angle.to_degrees()
         )
         .into_owned(),
-        codec::EntityType::LwPolyline(p) => {
+        document::EntityType::LwPolyline(p) => {
             let mut details = crate::tf!(
                 "{} vertices  closed={}  elevation={:.4}",
                 p.vertices.len(),
@@ -1479,7 +1579,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             }
             details
         }
-        codec::EntityType::Text(t) => crate::tf!(
+        document::EntityType::Text(t) => crate::tf!(
             "\"{}\"  h={:.4}  at ({:.4},{:.4})",
             t.value,
             t.height,
@@ -1487,7 +1587,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             t.insertion_point.y
         )
         .into_owned(),
-        codec::EntityType::MText(t) => crate::tf!(
+        document::EntityType::MText(t) => crate::tf!(
             "\"{}\"  h={:.4}  at ({:.4},{:.4})",
             t.value.chars().take(40).collect::<String>(),
             t.height,
@@ -1495,7 +1595,7 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             t.insertion_point.y
         )
         .into_owned(),
-        codec::EntityType::Insert(ins) => crate::tf!(
+        document::EntityType::Insert(ins) => crate::tf!(
             "block=\"{}\"  at ({:.4},{:.4},{:.4})  scale=({:.4},{:.4},{:.4})  rot={:.2}°",
             ins.block_name,
             ins.insert_point.x,
@@ -1507,14 +1607,14 @@ fn entity_list_details(entity: &codec::EntityType) -> String {
             ins.rotation.to_degrees()
         )
         .into_owned(),
-        codec::EntityType::Spline(s) => crate::tf!(
+        document::EntityType::Spline(s) => crate::tf!(
             "{} ctrl pts  degree={}  closed={}",
             s.control_points.len(),
             s.degree,
             s.flags.closed
         )
         .into_owned(),
-        codec::EntityType::Ellipse(e) => crate::tf!(
+        document::EntityType::Ellipse(e) => crate::tf!(
             "center ({:.4},{:.4})  major_len={:.4}  ratio={:.4}",
             e.center.x,
             e.center.y,
@@ -1539,7 +1639,7 @@ impl OpenCADStudio {
             if sel.len() == 1 {
                 let (h, e) = sel[0];
                 match e {
-                    codec::EntityType::Insert(ins) if !ins.attributes.is_empty() => Some(h),
+                    document::EntityType::Insert(ins) if !ins.attributes.is_empty() => Some(h),
                     _ => None,
                 }
             } else {
@@ -1560,10 +1660,10 @@ impl OpenCADStudio {
 #[cfg(test)]
 mod align_selected_bounds_tests {
     use super::*;
-    use codec::entities::{EntityType, Line};
-    use codec::types::Vector3;
+    use document::entities::{EntityType, Line};
+    use document::types::Vector3;
 
-    fn add_line(app: &mut OpenCADStudio, x1: f64, y1: f64, x2: f64, y2: f64) -> codec::Handle {
+    fn add_line(app: &mut OpenCADStudio, x1: f64, y1: f64, x2: f64, y2: f64) -> document::Handle {
         app.tabs[app.active_tab]
             .scene
             .add_entity(EntityType::Line(Line::from_points(
@@ -1572,14 +1672,14 @@ mod align_selected_bounds_tests {
             )))
     }
 
-    fn line_start_x(app: &OpenCADStudio, handle: codec::Handle) -> f64 {
+    fn line_start_x(app: &OpenCADStudio, handle: document::Handle) -> f64 {
         match app.tabs[app.active_tab].scene.document.get_entity(handle) {
             Some(EntityType::Line(l)) => l.start.x.min(l.end.x),
             other => panic!("expected a Line, got {other:?}"),
         }
     }
 
-    fn line_max_y(app: &OpenCADStudio, handle: codec::Handle) -> f64 {
+    fn line_max_y(app: &OpenCADStudio, handle: document::Handle) -> f64 {
         match app.tabs[app.active_tab].scene.document.get_entity(handle) {
             Some(EntityType::Line(l)) => l.start.y.max(l.end.y),
             other => panic!("expected a Line, got {other:?}"),
@@ -1789,5 +1889,58 @@ mod cal_tests {
         let _ = app.dispatch_command("CAL 1500mm");
         let last = &app.command_line.history.last().unwrap().text;
         assert!(last.ends_with("= 1.5"), "{last}");
+    }
+}
+
+#[cfg(test)]
+mod select_similar_clipboard_tests {
+    use super::*;
+    use iced::futures::StreamExt;
+
+    #[test]
+    fn select_similar_releases_command_focus_for_copy_shortcut() {
+        let mut app = OpenCADStudio::new_for_test();
+        let _ = app.automation_op(r#"{"op":"new"}"#);
+        let i = app.active_tab;
+        let handles = app.tabs[i].scene.add_entities(
+            (0..2)
+                .map(|y| {
+                    document::EntityType::Line(document::entities::Line::from_points(
+                        document::types::Vector3::new(0.0, y as f64, 0.0),
+                        document::types::Vector3::new(10.0, y as f64, 0.0),
+                    ))
+                })
+                .collect(),
+        );
+        app.tabs[i].scene.select_entities(&handles[..1]);
+        type Paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
+        let mut input = iced::widget::text_input::State::<Paragraph>::new();
+        input.focus();
+        let task = app.dispatch_command("SELECTSIMILAR");
+        if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+            while let Some(action) = iced::futures::executor::block_on(stream.next()) {
+                if let iced_runtime::Action::Widget(mut operation) = action {
+                    operation.focusable(
+                        Some(&iced::widget::Id::new(
+                            crate::ui::command_line::CMD_INPUT_ID,
+                        )),
+                        iced::Rectangle::default(),
+                        &mut input,
+                    );
+                }
+            }
+        }
+        assert_eq!(app.tabs[i].scene.selected.len(), 2);
+        assert!(
+            !input.is_focused(),
+            "empty command input must not capture Ctrl+C"
+        );
+        let shortcut = if cfg!(target_os = "macos") {
+            "CMD+C"
+        } else {
+            "CTRL+C"
+        };
+        let _ = app.run_shortcut(shortcut);
+        assert_eq!(app.clipboard.len(), 2, "both similar entities must copy");
     }
 }

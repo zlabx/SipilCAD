@@ -1,6 +1,13 @@
 use super::*;
 
-fn selected_edge_body(app: &OpenCADStudio, tab: usize) -> Option<codec::Handle> {
+/// XDATA application name marking a wipeout as a text mask and naming the text
+/// object it belongs to.
+const TEXTMASK_APP: &str = "TEXTMASK";
+/// Drawing variable holding the requested mask offset in drawing units. Unset
+/// means the offset follows the text height (15% of it).
+const TEXTMASK_OFFSET_VAR: &str = "TEXTMASKOFFSET";
+
+fn selected_edge_body(app: &OpenCADStudio, tab: usize) -> Option<document::Handle> {
     let scene = &app.tabs.get(tab)?.scene;
     let selected = scene.selected_handles_in_order();
     let [handle] = selected.as_slice() else {
@@ -9,7 +16,7 @@ fn selected_edge_body(app: &OpenCADStudio, tab: usize) -> Option<codec::Handle> 
 
     if matches!(
         scene.document.get_entity(*handle),
-        Some(codec::EntityType::Solid3D(_) | codec::EntityType::Surface(_))
+        Some(document::EntityType::Solid3D(_) | document::EntityType::Surface(_))
     ) {
         Some(*handle)
     } else {
@@ -20,7 +27,7 @@ fn selected_edge_body(app: &OpenCADStudio, tab: usize) -> Option<codec::Handle> 
 fn solid_edge_sources(
     app: &mut OpenCADStudio,
     tab: usize,
-) -> Vec<(codec::Handle, kernel::brep::Body)> {
+) -> Vec<(document::Handle, kernel::brep::Body)> {
     let handles = app.tabs[tab]
         .scene
         .document
@@ -28,7 +35,7 @@ fn solid_edge_sources(
         .filter_map(|entity| {
             matches!(
                 entity,
-                codec::EntityType::Solid3D(_) | codec::EntityType::Surface(_)
+                document::EntityType::Solid3D(_) | document::EntityType::Surface(_)
             )
             .then_some(entity.common().handle)
         })
@@ -123,132 +130,6 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
 
-            // JUSTIFYTEXT <option> — change the justification of selected text and
-            // multiline-text objects.
-            "JUSTIFYTEXT" => {
-                use crate::command::SelectThenKeywordCommand;
-                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
-                let c = SelectThenKeywordCommand::new(
-                    "JUSTIFYTEXT",
-                    "JUSTIFYTEXT  [Left / Center / Right / Middle / Aligned / Fit]:",
-                    vec![
-                        ("Left", "LEFT", None),
-                        ("Center", "CENTER", None),
-                        ("Right", "RIGHT", None),
-                        ("Middle", "MIDDLE", None),
-                        ("Aligned", "ALIGN", None),
-                        ("Fit", "FIT", None),
-                    ],
-                    has_sel,
-                );
-                self.command_line.push_info(&c.prompt());
-                self.tabs[i].active_cmd = Some(Box::new(c));
-            }
-            cmd if cmd.starts_with("JUSTIFYTEXT ") => {
-                let opt = cmd.split_whitespace().nth(1).unwrap_or("").to_uppercase();
-                let handles: Vec<codec::Handle> = self.tabs[i]
-                    .scene
-                    .selected_entities()
-                    .iter()
-                    .map(|(h, _)| *h)
-                    .filter(|handle| !self.tabs[i].scene.is_layer_locked(*handle))
-                    .collect();
-                if handles.is_empty() {
-                    self.command_line
-                        .push_error(crate::t!("JUSTIFYTEXT: select text objects first.").as_ref());
-                    return Some(Task::none());
-                }
-                if opt.is_empty() {
-                    self.command_line.push_info(
-                        crate::t!("Usage: JUSTIFYTEXT <Left|Center|Right|Middle|TL|TC|TR|ML|MC|MR|BL|BC|BR>").as_ref(),
-                    );
-                    return Some(Task::none());
-                }
-                use codec::entities::{
-                    AttachmentPoint as AP, TextHorizontalAlignment as TH,
-                    TextVerticalAlignment as TV,
-                };
-                let text_align = match opt.as_str() {
-                    "L" | "LEFT" | "TL" | "ML" | "BL" => Some(TH::Left),
-                    "C" | "CENTER" | "TC" | "BC" => Some(TH::Center),
-                    "R" | "RIGHT" | "TR" | "MR" | "BR" => Some(TH::Right),
-                    "M" | "MIDDLE" | "MC" => Some(TH::Middle),
-                    "A" | "ALIGN" | "ALIGNED" => Some(TH::Aligned),
-                    "F" | "FIT" => Some(TH::Fit),
-                    _ => None,
-                };
-                // Vertical band for single-line TEXT. Bare L/C/R (and Aligned/Fit
-                // and the special Middle) keep the baseline; the T*/M*/B* codes
-                // pin the top/middle/bottom of the text box.
-                let text_valign = match opt.as_str() {
-                    "TL" | "TC" | "TR" => Some(TV::Top),
-                    "ML" | "MC" | "MR" => Some(TV::Middle),
-                    "BL" | "BC" | "BR" => Some(TV::Bottom),
-                    _ => None,
-                };
-                let mtext_ap = match opt.as_str() {
-                    "TL" => Some(AP::TopLeft),
-                    "TC" => Some(AP::TopCenter),
-                    "TR" => Some(AP::TopRight),
-                    "ML" | "L" | "LEFT" => Some(AP::MiddleLeft),
-                    "MC" | "M" | "MIDDLE" | "C" | "CENTER" => Some(AP::MiddleCenter),
-                    "MR" | "R" | "RIGHT" => Some(AP::MiddleRight),
-                    "BL" => Some(AP::BottomLeft),
-                    "BC" => Some(AP::BottomCenter),
-                    "BR" => Some(AP::BottomRight),
-                    _ => None,
-                };
-                if text_align.is_none() && mtext_ap.is_none() {
-                    self.command_line.push_error(
-                        crate::t!("JUSTIFYTEXT: unknown justification option.").as_ref(),
-                    );
-                    return Some(Task::none());
-                }
-                self.push_undo_snapshot(i, "JUSTIFYTEXT");
-                let mut n = 0usize;
-                for h in &handles {
-                    if let Some(e) = self.tabs[i]
-                        .scene
-                        .document
-                        .entities_mut()
-                        .find(|e| e.common().handle == *h)
-                    {
-                        match e {
-                            codec::EntityType::Text(t) => {
-                                let mut changed = false;
-                                if let Some(a) = text_align {
-                                    t.horizontal_alignment = a;
-                                    changed = true;
-                                }
-                                if let Some(v) = text_valign {
-                                    t.vertical_alignment = v;
-                                    changed = true;
-                                }
-                                if changed {
-                                    crate::entities::text::sync_text_alignment_point(t);
-                                    n += 1;
-                                }
-                            }
-                            codec::EntityType::MText(m) => {
-                                if let Some(a) = mtext_ap {
-                                    m.attachment_point = a;
-                                    n += 1;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                self.tabs[i].dirty = true;
-                let changes: Vec<_> = handles
-                    .into_iter()
-                    .map(|handle| (handle, crate::scene::ChangeKind::Modified))
-                    .collect();
-                self.tabs[i].scene.bump_entities(&changes);
-                self.command_line
-                    .push_output(crate::tf!("JUSTIFYTEXT: updated {n} text object(s).").as_ref());
-            }
-
             // TCASE <Upper|Lower|Sentence|Title> — change the case of the text in
             // selected text and multiline-text objects.
             "TCASE" => {
@@ -270,7 +151,7 @@ impl OpenCADStudio {
             }
             cmd if cmd.starts_with("TCASE ") => {
                 let opt = cmd.split_whitespace().nth(1).unwrap_or("").to_uppercase();
-                let handles: Vec<codec::Handle> = self.tabs[i]
+                let handles: Vec<document::Handle> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .iter()
@@ -316,11 +197,11 @@ impl OpenCADStudio {
                         .find(|e| e.common().handle == *h)
                     {
                         match e {
-                            codec::EntityType::Text(t) => {
+                            document::EntityType::Text(t) => {
                                 t.value = conv(&t.value);
                                 n += 1;
                             }
-                            codec::EntityType::MText(m) => {
+                            document::EntityType::MText(m) => {
                                 m.value = conv(&m.value);
                                 n += 1;
                             }
@@ -342,24 +223,78 @@ impl OpenCADStudio {
             // extent and bring the text in front, so the mask hides whatever is
             // underneath while the text stays readable. (Same world-XY coordinate
             // space the WIPEOUT command uses.)
-            "TEXTMASK" => {
+            //   TEXTMASK                 mask the selection with the current offset
+            //   TEXTMASK OFFSET <n>      set the mask offset (drawing units)
+            //   TEXTMASK OFF             remove the masks from the selection (or all)
+            "TEXTMASK" | "-TEXTMASK" => {
                 use crate::command::SelectThenValueCommand;
                 let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
                 let c = SelectThenValueCommand::new(
                     "TEXTMASK",
-                    "TEXTMASK  press Enter to mask the selected text:",
+                    "TEXTMASK  press Enter to mask, or OFFSET <n> / OFF:",
                     has_sel,
                 );
                 self.command_line.push_info(&c.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(c));
             }
-            cmd if cmd.starts_with("TEXTMASK ") => {
-                let handles: Vec<codec::Handle> = self.tabs[i]
+            cmd if cmd.starts_with("TEXTMASK ") || cmd.starts_with("-TEXTMASK ") => {
+                let rest = cmd
+                    .trim_start_matches('-')
+                    .trim_start_matches("TEXTMASK")
+                    .trim();
+                let mut tokens = rest.split_whitespace();
+                let first = tokens.next().unwrap_or("");
+                if first.eq_ignore_ascii_case("OFF") || first.eq_ignore_ascii_case("REMOVE") {
+                    let handles: Vec<document::Handle> = self.tabs[i]
+                        .scene
+                        .selected_entities()
+                        .iter()
+                        .filter(|(_, e)| {
+                            matches!(e, document::EntityType::Text(_) | document::EntityType::MText(_))
+                        })
+                        .map(|(h, _)| *h)
+                        .collect();
+                    let scope = (!handles.is_empty()).then_some(handles);
+                    let removed = self.remove_textmasks(i, scope);
+                    self.command_line.push_output(
+                        crate::tf!("TEXTMASK: removed {removed} mask(s).").as_ref(),
+                    );
+                    return Some(Task::none());
+                }
+                if first.eq_ignore_ascii_case("OFFSET") {
+                    match tokens.next().and_then(|v| v.parse::<f64>().ok()) {
+                        Some(value) if value >= 0.0 && value.is_finite() => {
+                            crate::io::set_drawing_variable(
+                                &mut self.tabs[i].scene.document,
+                                TEXTMASK_OFFSET_VAR,
+                                &value.to_string(),
+                            );
+                            self.tabs[i].dirty = true;
+                            self.command_line.push_output(
+                                crate::tf!("TEXTMASK offset = {value}").as_ref(),
+                            );
+                        }
+                        Some(_) => self.command_line.push_error(
+                            crate::t!("TEXTMASK OFFSET: use a positive distance.").as_ref(),
+                        ),
+                        None => {
+                            let current = self
+                                .textmask_offset(i)
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "auto".to_string());
+                            self.command_line
+                                .push_output(crate::tf!("TEXTMASK offset = {current}").as_ref());
+                        }
+                    }
+                    return Some(Task::none());
+                }
+
+                let handles: Vec<document::Handle> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .iter()
                     .filter(|(_, e)| {
-                        matches!(e, codec::EntityType::Text(_) | codec::EntityType::MText(_))
+                        matches!(e, document::EntityType::Text(_) | document::EntityType::MText(_))
                     })
                     .map(|(h, _)| *h)
                     .filter(|handle| !self.tabs[i].scene.is_layer_locked(*handle))
@@ -370,40 +305,7 @@ impl OpenCADStudio {
                     return Some(Task::none());
                 }
                 self.push_undo_snapshot(i, "TEXTMASK");
-                let mut n = 0usize;
-                for h in &handles {
-                    let wires = self.tabs[i].scene.wire_models_for(&[*h]);
-                    let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
-                    for w in &wires {
-                        for p in &w.points {
-                            for k in 0..3 {
-                                min[k] = min[k].min(p[k]);
-                                max[k] = max[k].max(p[k]);
-                            }
-                        }
-                    }
-                    if min[0] > max[0] {
-                        continue; // no geometry for this object
-                    }
-                    let pad = ((max[1] - min[1]) * 0.15).max(0.0);
-                    let c1 = codec::types::Vector3::new(
-                        (min[0] - pad) as f64,
-                        (min[1] - pad) as f64,
-                        min[2] as f64,
-                    );
-                    let c2 = codec::types::Vector3::new(
-                        (max[0] + pad) as f64,
-                        (max[1] + pad) as f64,
-                        min[2] as f64,
-                    );
-                    self.tabs[i]
-                        .scene
-                        .add_entity_clone(codec::EntityType::Wipeout(
-                            codec::entities::Wipeout::from_corners(c1, c2),
-                        ));
-                    n += 1;
-                }
-                // Draw the text in front of its newly-added masks.
+                let n = self.apply_textmasks(i, &handles);
                 self.tabs[i]
                     .scene
                     .replace_selection(handles.iter().cloned().collect());
@@ -433,11 +335,11 @@ impl OpenCADStudio {
                         return Some(Task::none());
                     }
                 };
-                let handles: Vec<codec::Handle> = self.tabs[i]
+                let handles: Vec<document::Handle> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .iter()
-                    .filter(|(_, e)| matches!(e, codec::EntityType::Text(_)))
+                    .filter(|(_, e)| matches!(e, document::EntityType::Text(_)))
                     .map(|(h, _)| *h)
                     .filter(|handle| !self.tabs[i].scene.is_layer_locked(*handle))
                     .collect();
@@ -461,7 +363,7 @@ impl OpenCADStudio {
                     if cur_w <= 1e-9 {
                         continue;
                     }
-                    if let Some(codec::EntityType::Text(t)) = self.tabs[i]
+                    if let Some(document::EntityType::Text(t)) = self.tabs[i]
                         .scene
                         .document
                         .entities_mut()
@@ -521,12 +423,12 @@ impl OpenCADStudio {
                     }
                 };
 
-                let mut texts: Vec<(codec::Handle, f64, f64)> = self.tabs[i]
+                let mut texts: Vec<(document::Handle, f64, f64)> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .iter()
                     .filter_map(|(h, e)| match e {
-                        codec::EntityType::Text(t) if !self.tabs[i].scene.is_layer_locked(*h) => {
+                        document::EntityType::Text(t) if !self.tabs[i].scene.is_layer_locked(*h) => {
                             Some((*h, t.insertion_point.x, t.insertion_point.y))
                         }
                         _ => None,
@@ -552,7 +454,7 @@ impl OpenCADStudio {
                 let mut num = start;
 
                 for (h, _, _) in &texts {
-                    if let Some(codec::EntityType::Text(t)) = self.tabs[i]
+                    if let Some(document::EntityType::Text(t)) = self.tabs[i]
                         .scene
                         .document
                         .entities_mut()
@@ -606,7 +508,7 @@ impl OpenCADStudio {
                         .objects
                         .iter()
                         .find_map(|(handle, object)| match object {
-                            codec::objects::ObjectType::MultiLeaderStyle(style)
+                            document::objects::ObjectType::MultiLeaderStyle(style)
                                 if style.name.eq_ignore_ascii_case(&name) =>
                             {
                                 let mut style = style.clone();
@@ -642,7 +544,8 @@ impl OpenCADStudio {
                     .map_or_else(MLeaderCommand::new, |style| {
                         MLeaderCommand::with_style(style, multiplier)
                     })
-                    .with_drawing_resources(block_sources, layers, text_styles);
+                    .with_drawing_resources(block_sources, layers, text_styles)
+                    .with_layer(self.mleader_layer(i));
                 self.command_line.push_info(&new_cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
@@ -655,7 +558,16 @@ impl OpenCADStudio {
                 self.open_table_insert();
             }
 
-            "TABLEDIT" => {
+            "-TABLE" => {
+                self.start_command_line_table();
+            }
+
+            cmd if cmd.starts_with("-TABLE _LINK ") => {
+                self.place_command_line_link_table(&cmd["-TABLE _LINK ".len()..]);
+            }
+
+            "TABLEDIT" | "-TABLEDIT" => {
+                self.table_edit_command_line = cmd == "-TABLEDIT" || self.script_running;
                 use crate::modules::annotate::table_cmd::TableditCommand;
                 let cmd = TableditCommand::new();
                 self.command_line.push_info(&cmd.prompt());
@@ -663,45 +575,13 @@ impl OpenCADStudio {
             }
 
             "DIMCONTINUE" => {
-                use crate::modules::annotate::dim_continue::DimContinueCommand;
-                let scene = &self.tabs[i].scene;
-                let recent = scene
-                    .last_created_dimension
-                    .filter(|handle| scene.entity_belongs_to_active_space(*handle))
-                    .and_then(|handle| scene.document.get_entity(handle))
-                    .cloned();
-                let cmd = DimContinueCommand::new(recent, self.dimension_continue_mode == 1);
+                let cmd = self.dim_continue_command(i, false);
                 self.command_line.push_info(&cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
 
             "DIMBASELINE" => {
-                use crate::modules::annotate::dim_baseline::DimBaselineCommand;
-                let scene = &self.tabs[i].scene;
-                let recent = scene
-                    .last_created_dimension
-                    .filter(|handle| scene.entity_belongs_to_active_space(*handle))
-                    .and_then(|handle| scene.document.get_entity(handle))
-                    .cloned();
-                let dimdli_by_style = scene
-                    .document
-                    .dim_styles
-                    .iter()
-                    .map(|style| (style.name.to_ascii_lowercase(), style.dimdli))
-                    .collect();
-                let fallback_dimdli = if scene.document.header.measurement == 1 {
-                    3.75
-                } else {
-                    0.38
-                };
-                let current_style_name = scene.document.header.current_dimstyle_name.clone();
-                let cmd = DimBaselineCommand::new(
-                    recent,
-                    dimdli_by_style,
-                    current_style_name,
-                    fallback_dimdli,
-                    self.dimension_continue_mode == 1,
-                );
+                let cmd = self.dim_baseline_command(i, false);
                 self.command_line.push_info(&cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
@@ -737,6 +617,12 @@ impl OpenCADStudio {
                     .collect();
                 let cmd =
                     QdimCommand::new(selection, dim_spacing, self.quick_dimension_snap_priority);
+                let priority = if self.quick_dimension_snap_priority == 1 {
+                    crate::t!("Associative dimension priority = Intersection")
+                } else {
+                    crate::t!("Associative dimension priority = Endpoint")
+                };
+                self.command_line.push_output(&priority);
                 self.command_line.push_info(&cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
@@ -744,6 +630,20 @@ impl OpenCADStudio {
             "DIMEDIT" => {
                 use crate::modules::annotate::dimedit::DimEditCommand;
                 let cmd = DimEditCommand::new();
+                self.command_line.push_info(&cmd.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(cmd));
+            }
+
+            // The Dimensions panel's text buttons: pick, then the option.
+            "DIMTEDIT_ANGLE" | "DIMTEDIT_LEFT" | "DIMTEDIT_CENTER" | "DIMTEDIT_RIGHT" => {
+                use crate::modules::annotate::dimtedit::DimTeditCommand;
+                let option = match cmd {
+                    "DIMTEDIT_ANGLE" => "A",
+                    "DIMTEDIT_LEFT" => "L",
+                    "DIMTEDIT_CENTER" => "C",
+                    _ => "R",
+                };
+                let cmd = DimTeditCommand::with_option(option);
                 self.command_line.push_info(&cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
@@ -776,16 +676,20 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
 
-            "MLEADERADD" => {
-                use crate::modules::annotate::mleader_edit::MLeaderAddCommand;
-                let cmd = MLeaderAddCommand::new();
-                self.command_line.push_info(&cmd.prompt());
-                self.tabs[i].active_cmd = Some(Box::new(cmd));
-            }
-
-            "MLEADERREMOVE" => {
-                use crate::modules::annotate::mleader_edit::MLeaderRemoveCommand;
-                let cmd = MLeaderRemoveCommand::new();
+            "MLEADEREDIT" | "AIMLEADEREDITADD" | "AIMLEADEREDITREMOVE" => {
+                use crate::modules::annotate::mleader_edit::MLeaderEditCommand;
+                let name = match cmd {
+                    "AIMLEADEREDITADD" => "AIMLEADEREDITADD",
+                    "AIMLEADEREDITREMOVE" => "AIMLEADEREDITREMOVE",
+                    _ => "MLEADEREDIT",
+                };
+                let mut cmd = MLeaderEditCommand::new(name);
+                // A single preselected multileader is the one edited.
+                let selected = self.tabs[i].scene.selected_entities();
+                if let [(handle, document::EntityType::MultiLeader(ml))] = selected.as_slice() {
+                    cmd = cmd.with_target(*handle, (**ml).clone());
+                    self.tabs[i].scene.replace_selection(Default::default());
+                }
                 self.command_line.push_info(&cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(cmd));
             }
@@ -958,49 +862,67 @@ impl OpenCADStudio {
             }
 
             "STRETCH" => {
-                // With a prior selection the window only marks which points
-                // move. With none, the crossing window itself selects the
-                // objects — one round instead of a separate object-selection
-                // step (#338); the command emits StretchWindow for the host
-                // to resolve.
+                // With a prior selection the command goes directly to the base point
+                // prompt, as it should behave. If selected by a crossing window, only
+                // vertices within that window stretch (wholly enclosed objects move).
+                // If selected without a crossing window (e.g. clicked or normal window),
+                // the preselected objects move rigidly.
+                // With no selection, the crossing window itself selects the objects (#338).
                 use crate::modules::draw::modify::stretch::StretchCommand;
                 let handles: Vec<_> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .into_iter()
                     .map(|(h, _)| h)
+                    .filter(|h| !self.tabs[i].scene.is_layer_locked(*h))
                     .collect();
                 let wires = if handles.is_empty() {
                     Vec::new()
                 } else {
                     self.tabs[i].scene.wire_models_for(&handles)
                 };
-                // Selected by a crossing window just before: stretch through
-                // that window, no second one asked for (#1068). Every picked
-                // object must touch it, or the selection was changed since.
-                let window = self.tabs[i].last_crossing_window.and_then(|(lo, hi)| {
-                    let touches = |wire: &crate::scene::WireModel| {
-                        let [x0, y0, x1, y1] = wire.aabb.map(f64::from);
-                        x0 <= hi[0] && x1 >= lo[0] && y0 <= hi[1] && y1 >= lo[1]
-                    };
-                    (!handles.is_empty()
-                        && handles.iter().all(|h| {
-                            self.tabs[i]
-                                .scene
-                                .wire_models_for(&[*h])
-                                .iter()
-                                .any(touches)
-                        }))
-                    .then(|| {
-                        (
-                            glam::DVec3::new(lo[0], lo[1], f64::NEG_INFINITY),
-                            glam::DVec3::new(hi[0], hi[1], f64::INFINITY),
-                        )
-                    })
-                });
-                let new_cmd = match window {
-                    Some(window) => StretchCommand::preselected(handles, wires, window),
-                    None => StretchCommand::new(handles, wires),
+
+                let new_cmd = if handles.is_empty() {
+                    StretchCommand::new(handles, wires)
+                } else {
+                    let mut windows = Vec::new();
+                    if let Some((lo, hi)) = self.tabs[i].last_crossing_window {
+                        let min_x = lo[0].min(hi[0]);
+                        let min_y = lo[1].min(hi[1]);
+                        let max_x = lo[0].max(hi[0]);
+                        let max_y = lo[1].max(hi[1]);
+                        let win_min = glam::DVec3::new(min_x, min_y, f64::NEG_INFINITY);
+                        let win_max = glam::DVec3::new(max_x, max_y, f64::INFINITY);
+
+                        let touches = |h: document::Handle| -> bool {
+                            let entity_wires = self.tabs[i].scene.wire_models_for(&[h]);
+                            entity_wires.iter().any(|wire| {
+                                let [x0, y0, x1, y1] = wire.aabb.map(f64::from);
+                                x0 <= max_x && x1 >= min_x && y0 <= max_y && y1 >= min_y
+                            })
+                        };
+
+                        if handles.iter().any(|h| touches(*h)) {
+                            windows.push((win_min, win_max));
+                            // Any handle that does not touch the crossing window was selected
+                            // outside it (e.g. individually picked), so it moves as a whole.
+                            for h in &handles {
+                                if !touches(*h) {
+                                    let entity_wires = self.tabs[i].scene.wire_models_for(&[*h]);
+                                    for w in &entity_wires {
+                                        let [x0, y0, x1, y1] = w.aabb.map(f64::from);
+                                        if x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() {
+                                            windows.push((
+                                                glam::DVec3::new(x0 - 1e-4, y0 - 1e-4, f64::NEG_INFINITY),
+                                                glam::DVec3::new(x1 + 1e-4, y1 + 1e-4, f64::INFINITY),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    StretchCommand::preselected_with_windows(handles, wires, windows)
                 };
                 self.command_line.push_info(&new_cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
@@ -1210,65 +1132,8 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
 
-            "EXPLODE" => {
-                use crate::modules::draw::modify::explode::{
-                    apply_explode_replacements, plan_explode,
-                };
-                let selected: Vec<_> = self.tabs[i]
-                    .scene
-                    .selected_entities()
-                    .into_iter()
-                    .filter(|(handle, _)| !self.tabs[i].scene.is_layer_locked(*handle))
-                    .collect();
-                if selected.is_empty() {
-                    use crate::modules::draw::select::SelectObjectsCommand;
-                    let cmd = SelectObjectsCommand::new("EXPLODE");
-                    self.command_line.push_info(&cmd.prompt());
-                    self.tabs[i].active_cmd = Some(Box::new(cmd));
-                } else {
-                    // EXPLMODE 0 keeps references that are not uniformly and
-                    // positively scaled whole.
-                    let selected: Vec<_> =
-                        if super::blockvars::explmode(&self.tabs[i].scene.document) == 0 {
-                            selected
-                                .into_iter()
-                                .filter(|(_, entity)| match entity {
-                                    codec::EntityType::Insert(ins) => {
-                                        let (x, y, z) =
-                                            (ins.x_scale(), ins.y_scale(), ins.z_scale());
-                                        let uniform = x > 0.0
-                                            && (x - y).abs() <= 1e-10
-                                            && (x - z).abs() <= 1e-10;
-                                        if !uniform {
-                                            self.command_line.push_output(
-                                            "The object is not uniformly and positively scaled.",
-                                        );
-                                        }
-                                        uniform
-                                    }
-                                    _ => true,
-                                })
-                                .collect()
-                        } else {
-                            selected
-                        };
-                    let replacements = plan_explode(&selected, &self.tabs[i].scene.document);
-                    let exploded = replacements.len();
-                    if exploded > 0 {
-                        self.push_undo_snapshot(i, "EXPLODE");
-                    }
-                    apply_explode_replacements(&mut self.tabs[i].scene, replacements);
-                    if exploded > 0 {
-                        self.tabs[i].dirty = true;
-                        self.refresh_properties();
-                        self.command_line
-                            .push_output(crate::tf!("{exploded} object(s) exploded.").as_ref());
-                    } else {
-                        self.command_line.push_info(
-                            crate::t!("EXPLODE: no explodable objects selected.").as_ref(),
-                        );
-                    }
-                }
+            "EXPLODE" | "BURST" => {
+                self.explode_selection(i, cmd == "BURST");
             }
 
             // TXTEXP — text becomes the polylines of its character outlines.
@@ -1350,19 +1215,24 @@ impl OpenCADStudio {
                 } else {
                     OffsetCommand::with_selection(all_entities, preselected)
                 };
+                self.command_line
+                    .push_info(&crate::modules::draw::modify::offset::current_settings_line());
                 self.command_line.push_info(&new_cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
 
             "TRIM" => {
                 use crate::modules::draw::modify::trim::{is_trim_boundary_entity, TrimCommand};
-                // Only curves cut or get cut: block references, text and the
-                // like stay out of the working copy (#1978). HATCH fills have
+                // Only curves cut or get cut: text and the like stay out of
+                // the working copy (#1978), and a block reference cuts only
+                // through its contents, added below (#2192). HATCH fills have
                 // their own renderer, so visible top-level hatches are added
-                // for the hatch trim solver.
-                let mut entities =
-                    self.tabs[i].scene.visible_entities_for_edit(is_trim_boundary_entity);
-                let mut seen: std::collections::HashSet<codec::Handle> =
+                // for the hatch trim solver. A multiline is trimmed but never
+                // cuts (#2068).
+                let mut entities = self.tabs[i].scene.visible_entities_for_edit(|entity| {
+                    is_trim_boundary_entity(entity) || matches!(entity, document::EntityType::MLine(_))
+                });
+                let mut seen: std::collections::HashSet<document::Handle> =
                     entities.iter().map(|(handle, _)| *handle).collect();
                 for handle in self.tabs[i].scene.visible_hatch_handles_for_edit() {
                     if seen.insert(handle) {
@@ -1371,15 +1241,52 @@ impl OpenCADStudio {
                         }
                     }
                 }
-                let initial_edges: Vec<codec::Handle> = self.tabs[i]
+                let initial_edges: Vec<document::Handle> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .into_iter()
-                    .filter(|(_, entity)| is_trim_boundary_entity(entity))
+                    .filter(|(_, entity)| {
+                        is_trim_boundary_entity(entity)
+                            || matches!(entity, document::EntityType::Insert(_))
+                    })
                     .map(|(handle, _)| handle)
                     .collect();
                 let all_entities: Vec<_> = entities.into_iter().map(|(_, e)| e).collect();
-                let new_cmd = TrimCommand::with_cutting_edges(all_entities, initial_edges);
+                let visible_inserts = self.tabs[i]
+                    .scene
+                    .visible_entities_for_edit(|entity| {
+                        matches!(entity, document::EntityType::Insert(_))
+                    });
+                let document = &self.tabs[i].scene.document;
+                let block_boundaries = visible_inserts
+                    .into_iter()
+                    .filter_map(|entity| {
+                        let (handle, entity) = entity;
+                        let document::EntityType::Insert(insert) = entity else {
+                            return None;
+                        };
+                        let children = insert.block_entities_from_document(document)?;
+                        let pieces = insert
+                            .explode(&children)
+                            .into_iter()
+                            // Only what can cut (and nested blocks): text,
+                            // fills and dimensions would only cost memory.
+                            .filter(|child| {
+                                (is_trim_boundary_entity(child)
+                                    || matches!(child, document::EntityType::Insert(_)))
+                                    && !crate::scene::block_construction::is_construction(
+                                        child.common(),
+                                    )
+                            })
+                            .collect();
+                        Some((handle, pieces))
+                    })
+                    .collect();
+                let new_cmd = TrimCommand::with_block_boundaries(
+                    all_entities,
+                    block_boundaries,
+                    initial_edges,
+                );
                 self.command_line.push_info(&new_cmd.prompt());
                 self.tabs[i].active_cmd = Some(Box::new(new_cmd));
             }
@@ -1396,7 +1303,7 @@ impl OpenCADStudio {
                 use crate::modules::draw::modify::trim::{is_trim_boundary_entity, ExtendCommand};
                 let entities =
                     self.tabs[i].scene.visible_entities_for_edit(is_trim_boundary_entity);
-                let initial_edges: Vec<codec::Handle> = self.tabs[i]
+                let initial_edges: Vec<document::Handle> = self.tabs[i]
                     .scene
                     .selected_entities()
                     .into_iter()
@@ -1423,8 +1330,8 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(c));
             }
             cmd if cmd.starts_with("ARCTEXT ") => {
-                use codec::entities::Text;
-                use codec::types::Vector3;
+                use document::entities::Text;
+                use document::types::Vector3;
                 let text = cmd.strip_prefix("ARCTEXT").unwrap_or("").trim().to_string();
                 if text.is_empty() {
                     self.command_line.push_info(
@@ -1441,7 +1348,7 @@ impl OpenCADStudio {
                         .selected_entities()
                         .iter()
                         .find_map(|(_, e)| match e {
-                            codec::EntityType::Arc(a) => Some(a.clone()),
+                            document::EntityType::Arc(a) => Some(a.clone()),
                             _ => None,
                         });
                 let Some(arc) = arc else {
@@ -1472,7 +1379,7 @@ impl OpenCADStudio {
                     let t = Text::with_value(ch.to_string(), pos)
                         .with_height(height)
                         .with_rotation(ang + std::f64::consts::FRAC_PI_2);
-                    self.tabs[i].scene.add_entity(codec::EntityType::Text(t));
+                    self.tabs[i].scene.add_entity(document::EntityType::Text(t));
                 }
                 self.tabs[i].dirty = true;
                 self.command_line.push_output(
@@ -1480,9 +1387,528 @@ impl OpenCADStudio {
                 );
             }
 
+            // Apply the current dimension style to the selected dimensions.
+            // Overrides are cleared by default, as the reference asks; KEEP
+            // leaves them in place.
+            cmd if cmd == "DIMUPDATE" || cmd.starts_with("DIMUPDATE ") => {
+                let argument = cmd
+                    .strip_prefix("DIMUPDATE")
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_uppercase();
+                let keep = matches!(argument.as_str(), "KEEP" | "YES" | "Y");
+                let handles = self.selected_editable_dimensions(i);
+                if self.tabs[i].scene.selected_handles_in_order().is_empty() {
+                    use crate::modules::draw::select::SelectObjectsCommand;
+                    let sel = SelectObjectsCommand::routed("DIMUPDATE", cmd);
+                    self.command_line.push_info(&sel.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(sel));
+                } else if handles.is_empty() {
+                    self.command_line.push_error(
+                        crate::t!("DIMUPDATE: no editable dimensions were selected.").as_ref(),
+                    );
+                } else {
+                    use crate::entities::dim_override as dov;
+                    let style = self.tabs[i]
+                        .scene
+                        .document
+                        .header
+                        .current_dimstyle_name
+                        .clone();
+                    self.push_undo_snapshot(i, "DIMUPDATE");
+                    let mut updated = 0usize;
+                    let mut current = 0usize;
+                    for handle in &handles {
+                        if !keep {
+                            dov::replace(&mut self.tabs[i].scene.document, *handle, Vec::new());
+                        }
+                        let already = matches!(
+                            self.tabs[i].scene.document.get_entity(*handle),
+                            Some(document::EntityType::Dimension(dimension))
+                                if dimension.base().style_name.eq_ignore_ascii_case(&style)
+                        );
+                        if let Some(document::EntityType::Dimension(dimension)) =
+                            self.tabs[i].scene.document.get_entity_mut(*handle)
+                        {
+                            dimension.base_mut().style_name = style.clone();
+                            crate::entities::dimension::reset_automatic_text_position(
+                                dimension.base_mut(),
+                            );
+                        }
+                        self.tabs[i].scene.invalidate_dim_block_recorded(*handle);
+                        if already {
+                            current += 1;
+                        } else {
+                            updated += 1;
+                        }
+                    }
+                    self.tabs[i].dirty = true;
+                    self.refresh_properties();
+                    self.command_line.push_output(
+                        crate::tf!(
+                            "DIMUPDATE: applied '{}' to {} dimension(s), {} already current; overrides {}.",
+                            style,
+                            updated,
+                            current,
+                            if keep { "kept" } else { "cleared" }
+                        )
+                        .as_ref(),
+                    );
+                }
+            }
+
+            "DIMOVERRIDE" => {
+                use crate::modules::annotate::dimoverride::DimOverrideCommand;
+                let document = &self.tabs[i].scene.document;
+                let style = document
+                    .dim_styles
+                    .iter()
+                    .find(|style| {
+                        style
+                            .name
+                            .eq_ignore_ascii_case(&document.header.current_dimstyle_name)
+                    })
+                    .cloned();
+                let named = crate::modules::annotate::dimoverride::NamedValues {
+                    defaults: style
+                        .as_ref()
+                        .map(|style| {
+                            let block = |handle: document::Handle| {
+                                document
+                                    .block_records
+                                    .iter()
+                                    .find(|record| !handle.is_null() && record.handle == handle)
+                                    .map_or_else(
+                                        || "ClosedFilled".to_string(),
+                                        |record| record.name.clone(),
+                                    )
+                            };
+                            vec![
+                                ("DIMBLK".to_string(), block(style.dimblk)),
+                                ("DIMBLK1".to_string(), block(style.dimblk1)),
+                                ("DIMBLK2".to_string(), block(style.dimblk2)),
+                                ("DIMLDRBLK".to_string(), block(style.dimldrblk)),
+                                ("DIMTXSTY".to_string(), style.dimtxsty.clone()),
+                            ]
+                        })
+                        .unwrap_or_default(),
+                    blocks: document
+                        .block_records
+                        .iter()
+                        .map(|record| record.name.clone())
+                        .collect(),
+                    text_styles: document
+                        .text_styles
+                        .iter()
+                        .map(|style| style.name.clone())
+                        .collect(),
+                };
+                let cmd = DimOverrideCommand::new(style, named);
+                self.command_line.push_info(&cmd.prompt());
+                self.command_line.set_step_options(cmd.options());
+                self.tabs[i].active_cmd = Some(Box::new(cmd));
+            }
+
+            cmd if cmd.starts_with("DIMOVERRIDE_APPLY ") => {
+                let spec = cmd.trim_start_matches("DIMOVERRIDE_APPLY ").trim();
+                // Arrowhead blocks and the text style are written as handles,
+                // resolved (a standard arrowhead's block made) once here.
+                use crate::modules::annotate::dimoverride::NAMED_VALUE_VARS;
+                let mut handle_values = Vec::new();
+                let spec: String = spec
+                    .split(';')
+                    .filter(|entry| {
+                        let (name, value) = entry.split_once('=').unwrap_or((entry, ""));
+                        let name = name.trim().to_ascii_uppercase();
+                        if !NAMED_VALUE_VARS.contains(&name.as_str()) {
+                            return true;
+                        }
+                        handle_values.push((name, value.trim().to_string()));
+                        false
+                    })
+                    .collect::<Vec<_>>()
+                    .join(";");
+                let spec = spec.as_str();
+                let mut resolved_handles = Vec::new();
+                for (name, value) in handle_values {
+                    use crate::entities::dim_override as dov;
+                    let doc = &mut self.tabs[i].scene.document;
+                    let (code, handle) = if name == "DIMTXSTY" {
+                        let found = doc
+                            .text_styles
+                            .iter()
+                            .find(|style| style.name.eq_ignore_ascii_case(&value))
+                            .map(|style| style.handle);
+                        (dov::DIMTXSTY, found)
+                    } else {
+                        let code = match name.as_str() {
+                            "DIMBLK" => dov::DIMBLK,
+                            "DIMBLK1" => dov::DIMBLK1,
+                            "DIMBLK2" => dov::DIMBLK2,
+                            _ => dov::DIMLDRBLK,
+                        };
+                        let block = crate::entities::arrowheads::typed_standard_block(&value)
+                            .map(str::to_string)
+                            .unwrap_or(value.clone());
+                        (code, crate::entities::arrowheads::resolve(doc, &block))
+                    };
+                    if let Some(handle) = handle {
+                        resolved_handles.push((code, document::xdata::XDataValue::Handle(handle)));
+                    }
+                }
+                let values = if spec.eq_ignore_ascii_case("CLEAR") {
+                    Vec::new()
+                } else if spec.trim().is_empty() {
+                    resolved_handles.clone()
+                } else {
+                    match crate::modules::annotate::dimoverride::parse_spec(spec) {
+                        Ok(mut values) if !values.is_empty() || !resolved_handles.is_empty() => {
+                            values.extend(resolved_handles.iter().cloned());
+                            values
+                        }
+                        Ok(_) => return Some(self.finish_dispatch(cmd)),
+                        Err(entry) => {
+                            self.command_line.push_error(
+                                crate::tf!("DIMOVERRIDE: invalid override \"{entry}\".").as_ref(),
+                            );
+                            return Some(self.finish_dispatch(cmd));
+                        }
+                    }
+                };
+                let handles = self.selected_editable_dimensions(i);
+                if self.tabs[i].scene.selected_handles_in_order().is_empty() {
+                    use crate::modules::draw::select::SelectObjectsCommand;
+                    let sel = SelectObjectsCommand::routed("DIMOVERRIDE", cmd);
+                    self.command_line.push_info(&sel.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(sel));
+                } else if handles.is_empty() {
+                    self.command_line.push_error(
+                        crate::t!("DIMOVERRIDE: no editable dimensions were selected.").as_ref(),
+                    );
+                } else {
+                    use crate::entities::dim_override as dov;
+                    self.push_undo_snapshot(i, "DIMOVERRIDE");
+                    for &handle in &handles {
+                        let doc = &mut self.tabs[i].scene.document;
+                        if values.is_empty() {
+                            dov::replace(doc, handle, Vec::new());
+                        }
+                        for (code, value) in &values {
+                            dov::set(doc, handle, *code, Some(value.clone()));
+                        }
+                    }
+                    self.invalidate_property_targets(i, &handles);
+                    self.tabs[i].dirty = true;
+                    self.refresh_properties();
+                    self.command_line.push_output(
+                        crate::tf!("DIMOVERRIDE: updated {} dimension(s).", handles.len()).as_ref(),
+                    );
+                }
+            }
+
+            // DIMREASSOCIATE's Disassociated: every dimension of the space
+            // without associations.
+            "_DIMREASSOCIATE_DISASSOCIATED" => {
+                let scene = &self.tabs[i].scene;
+                let handles: Vec<document::Handle> = scene
+                    .document
+                    .entities()
+                    .filter_map(|entity| match entity {
+                        document::EntityType::Dimension(dimension) => {
+                            Some(dimension.base().common.handle)
+                        }
+                        _ => None,
+                    })
+                    .filter(|&handle| {
+                        scene.document.get_entity(handle).is_some_and(|entity| {
+                            entity.common().owner_handle == scene.current_layout_block_handle_pub()
+                        }) && scene.dimension_association(handle).is_none()
+                            && !scene.is_layer_locked(handle)
+                    })
+                    .collect();
+                self.tabs[i].scene.deselect_all();
+                if handles.is_empty() {
+                    return Some(self.finish_dispatch(cmd));
+                }
+                let found = handles.len();
+                self.command_line.push_output(&crate::tf!("{found} found"));
+                self.tabs[i].scene.select_entities(&handles);
+                return Some(self.dispatch_command("DIMREASSOCIATE"));
+            }
+
+            // DIMREGEN: solve every association against the current geometry,
+            // drop each generated picture, and report what could not be solved.
+            "DIMREGEN" => {
+                use crate::scene::ChangeKind;
+                let (refreshed, broken, pictures, total, associated) = {
+                    let scene = &mut self.tabs[i].scene;
+                    let dimensions: Vec<document::Handle> = scene
+                        .document
+                        .entities()
+                        .filter_map(|entity| match entity {
+                            document::EntityType::Dimension(dimension) => {
+                                Some(dimension.base().common.handle)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let associated: Vec<document::Handle> = dimensions
+                        .iter()
+                        .copied()
+                        .filter(|handle| scene.dimension_association(*handle).is_some())
+                        .collect();
+                    // Every entity counts as changed: DIMREGEN is the explicit
+                    // "solve the associations again" pass. Entities live in
+                    // their own table, not in `objects` (which holds the
+                    // association records themselves), so walking objects
+                    // would never match a source handle.
+                    let changes: Vec<(document::Handle, ChangeKind)> = scene
+                        .document
+                        .entities()
+                        .map(|entity| (entity.common().handle, ChangeKind::Modified))
+                        .collect();
+                    let refreshed = scene.refresh_associative_dimensions(&changes);
+                    let mut broken = Vec::new();
+                    for handle in &associated {
+                        let status = scene.dimension_association_status(*handle);
+                        if status.iter().any(|(_, state)| {
+                            !matches!(state, crate::scene::ReferenceStatus::Resolved)
+                        }) {
+                            broken.push(*handle);
+                        }
+                    }
+                    // Pictures saved with a dimension bypass generated
+                    // rendering, so they are dropped after a resolved solve.
+                    let pictures: Vec<document::Handle> = scene
+                        .document
+                        .entities()
+                        .filter(|entity| {
+                            matches!(entity, document::EntityType::Dimension(d)
+                                if !d.base().block_name.is_empty())
+                        })
+                        .map(|entity| entity.common().handle)
+                        .collect();
+                    (
+                        refreshed,
+                        broken,
+                        pictures,
+                        dimensions.len(),
+                        associated.len(),
+                    )
+                };
+                if !refreshed.is_empty() || !pictures.is_empty() {
+                    self.push_undo_snapshot(i, "DIMREGEN");
+                    for &handle in &pictures {
+                        self.tabs[i].scene.invalidate_dim_block_recorded(handle);
+                    }
+                    self.tabs[i].scene.bump_entities(&refreshed);
+                    self.tabs[i].dirty = true;
+                }
+                self.command_line.push_output(
+                    crate::tf!(
+                        "DIMREGEN: {} updated, {} broken, {} without association.",
+                        refreshed.len(),
+                        broken.len(),
+                        total.saturating_sub(associated)
+                    )
+                    .as_ref(),
+                );
+                for handle in broken {
+                    self.command_line.push_output(
+                        crate::tf!(
+                            "  Dimension {:X} has a reference that no longer resolves.",
+                            handle.value()
+                        )
+                        .as_ref(),
+                    );
+                }
+                self.refresh_properties();
+            }
+
+            "DIMDISASSOCIATE" | "DIMREASSOCIATE" => {
+                let handles = self.selected_editable_dimensions(i);
+                if handles.is_empty() {
+                    use crate::modules::draw::select::SelectObjectsCommand;
+                    self.tabs[i].scene.deselect_all();
+                    let sel = if cmd == "DIMDISASSOCIATE" {
+                        self.command_line
+                            .push_info(&crate::t!("Select dimensions to disassociate ..."));
+                        SelectObjectsCommand::associative_dimensions(cmd, cmd, "Select objects:")
+                    } else {
+                        self.command_line
+                            .push_info(&crate::t!("Select dimensions to reassociate ..."));
+                        SelectObjectsCommand::with_keyword(
+                            cmd,
+                            cmd,
+                            "Select objects or [Disassociated]:",
+                            "Disassociated",
+                            "D",
+                            || crate::command::CmdResult::Dispatch("_DIMREASSOCIATE_DISASSOCIATED".into()),
+                        )
+                    };
+                    self.command_line.push_info(&sel.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(sel));
+                } else if cmd == "DIMDISASSOCIATE" {
+                    self.push_undo_snapshot(i, "DIMDISASSOCIATE");
+                    let count = handles
+                        .iter()
+                        .filter(|&&handle| self.tabs[i].scene.detach_dimension_association(handle))
+                        .count();
+                    self.invalidate_property_targets(i, &handles);
+                    self.tabs[i].dirty |= count > 0;
+                    self.command_line
+                        .push_output(crate::tf!("{count} disassociated.").as_ref());
+                } else {
+                    // Each dimension's definition points are asked in turn.
+                    use crate::modules::annotate::dimreassociate::{
+                        DimReassociateCommand, ReassociateKind,
+                    };
+                    let scene = &self.tabs[i].scene;
+                    let v = |p: document::types::Vector3| glam::DVec3::new(p.x, p.y, p.z);
+                    let (items, points): (Vec<_>, Vec<_>) = handles
+                        .iter()
+                        .filter_map(|&handle| {
+                            let dimension = scene
+                                .document
+                                .get_entity(handle)
+                                .and_then(crate::entities::dimension::as_dimension)?;
+                            let points = match dimension {
+                                document::entities::Dimension::Linear(d) => {
+                                    vec![v(d.first_point), v(d.second_point)]
+                                }
+                                document::entities::Dimension::Aligned(d) => {
+                                    vec![v(d.first_point), v(d.second_point)]
+                                }
+                                document::entities::Dimension::Angular3Pt(d) => {
+                                    vec![v(d.angle_vertex), v(d.first_point), v(d.second_point)]
+                                }
+                                document::entities::Dimension::Ordinate(d) => {
+                                    vec![v(d.feature_location)]
+                                }
+                                _ => Vec::new(),
+                            };
+                            let kind = match dimension {
+                                document::entities::Dimension::Linear(_)
+                                | document::entities::Dimension::Aligned(_) => ReassociateKind::Linear,
+                                document::entities::Dimension::Angular3Pt(_) => {
+                                    ReassociateKind::Angular3
+                                }
+                                document::entities::Dimension::Angular2Ln(_) => {
+                                    ReassociateKind::Angular2
+                                }
+                                document::entities::Dimension::Radius(_)
+                                | document::entities::Dimension::Diameter(_) => {
+                                    ReassociateKind::Radial
+                                }
+                                document::entities::Dimension::Ordinate(_) => {
+                                    ReassociateKind::Ordinate
+                                }
+                                _ => return None,
+                            };
+                            Some(((handle, kind), points))
+                        })
+                        .unzip();
+                    self.tabs[i].scene.deselect_all();
+                    if !items.is_empty() {
+                        let command = DimReassociateCommand::new(items, points);
+                        self.command_line.push_info(&command.prompt());
+                        self.command_line.set_step_options(command.options());
+                        self.tabs[i].active_cmd = Some(Box::new(command));
+                    }
+                }
+            }
+
             _ => return None,
         }
         Some(self.finish_dispatch(cmd))
+    }
+
+    /// EXPLODE and BURST: break the selection into simple entities. BURST
+    /// keeps a block reference's attribute values as text.
+    fn explode_selection(&mut self, i: usize, keep_attributes: bool) {
+        use crate::modules::draw::modify::explode::{
+            apply_explode_replacements, plan_burst, plan_explode_in_context,
+        };
+        let selected: Vec<_> = self.tabs[i]
+            .scene
+            .selected_entities()
+            .into_iter()
+            .filter(|(handle, _)| !self.tabs[i].scene.is_layer_locked(*handle))
+            .collect();
+        if selected.is_empty() {
+            use crate::modules::draw::select::SelectObjectsCommand;
+            let cmd = SelectObjectsCommand::new(if keep_attributes { "BURST" } else { "EXPLODE" });
+            self.command_line.push_info(&cmd.prompt());
+            self.tabs[i].active_cmd = Some(Box::new(cmd));
+            return;
+        }
+        // EXPLMODE 0 keeps references that are not uniformly and positively
+        // scaled whole.
+        let selected: Vec<_> = if super::blockvars::explmode(&self.tabs[i].scene.document) == 0 {
+            selected
+                .into_iter()
+                .filter(|(_, entity)| match entity {
+                    document::EntityType::Insert(ins) => {
+                        let (x, y, z) = (ins.x_scale(), ins.y_scale(), ins.z_scale());
+                        let uniform =
+                            x > 0.0 && (x - y).abs() <= 1e-10 && (x - z).abs() <= 1e-10;
+                        if !uniform {
+                            self.command_line.push_output(
+                                "The object is not uniformly and positively scaled.",
+                            );
+                        }
+                        uniform
+                    }
+                    _ => true,
+                })
+                .collect()
+        } else {
+            selected
+        };
+        let replacements = if keep_attributes {
+            plan_burst(&selected, &self.tabs[i].scene.document)
+        } else {
+            plan_explode_in_context(
+                &selected,
+                &self.tabs[i].scene.document,
+                self.tabs[i].scene.displayed_annotation_scale_handle(),
+            )
+        };
+        let exploded = replacements.len();
+        if exploded > 0 {
+            self.push_undo_snapshot(i, if keep_attributes { "BURST" } else { "EXPLODE" });
+        }
+        apply_explode_replacements(&mut self.tabs[i].scene, replacements);
+        if exploded > 0 {
+            self.tabs[i].dirty = true;
+            self.refresh_properties();
+            self.command_line.push_output(
+                crate::tf!(
+                    "{exploded} object(s) {}.",
+                    if keep_attributes { "burst" } else { "exploded" }
+                )
+                .as_ref(),
+            );
+        } else if keep_attributes {
+            self.command_line
+                .push_info(crate::t!("BURST: no explodable objects selected.").as_ref());
+        } else {
+            self.command_line
+                .push_info(crate::t!("EXPLODE: no explodable objects selected.").as_ref());
+        }
+    }
+
+    /// The selected dimensions that are not on a locked layer.
+    fn selected_editable_dimensions(&self, i: usize) -> Vec<document::Handle> {
+        let scene = &self.tabs[i].scene;
+        scene
+            .selected_entities()
+            .into_iter()
+            .filter(|(handle, entity)| {
+                matches!(entity, document::EntityType::Dimension(_)) && !scene.is_layer_locked(*handle)
+            })
+            .map(|(handle, _)| handle)
+            .collect()
     }
 }
 
@@ -1512,13 +1938,13 @@ impl OpenCADStudio {
     /// TXT2MTXT on the selection (in selection order), as one undo step.
     fn apply_txt2mtxt(&mut self, i: usize) {
         let scene = &self.tabs[i].scene;
-        let handles: Vec<codec::Handle> = scene
+        let handles: Vec<document::Handle> = scene
             .selected_handles_in_order()
             .into_iter()
             .filter(|handle| !scene.is_layer_locked(*handle))
             .collect();
         let plan = {
-            let selected: Vec<(codec::Handle, &codec::EntityType)> = handles
+            let selected: Vec<(document::Handle, &document::EntityType)> = handles
                 .iter()
                 .filter_map(|h| scene.document.get_entity(*h).map(|e| (*h, e)))
                 .collect();
@@ -1554,5 +1980,202 @@ impl OpenCADStudio {
         } else {
             format!("  {removed} Text objects removed, {added} MText objects added.")
         });
+    }
+
+    /// The requested mask offset in drawing units, or `None` when the offset
+    /// follows the text height.
+    fn textmask_offset(&self, i: usize) -> Option<f64> {
+        crate::io::drawing_variable(&self.tabs[i].scene.document, TEXTMASK_OFFSET_VAR)
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+    }
+
+    /// Screen-space bounds of one entity in the same coordinate space the
+    /// WIPEOUT command uses.
+    fn textmask_bounds(
+        &self,
+        i: usize,
+        handle: document::Handle,
+    ) -> Option<([f32; 3], [f32; 3])> {
+        let wires = self.tabs[i].scene.wire_models_for(&[handle]);
+        let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for wire in &wires {
+            for point in &wire.points {
+                for k in 0..3 {
+                    min[k] = min[k].min(point[k]);
+                    max[k] = max[k].max(point[k]);
+                }
+            }
+        }
+        if min[0] <= max[0] {
+            return Some((min, max));
+        }
+        // Glyph wires need the font atlas, which a headless document may not
+        // have built yet. Fall back to the text's own placement so a mask can
+        // still be created and reported.
+        let entity = self.tabs[i].scene.document.get_entity(handle)?;
+        let (origin, width, height, rotation) = match entity {
+            document::EntityType::Text(text) => {
+                let width = text.value.chars().count() as f64
+                    * text.height
+                    * 0.6
+                    * text.width_factor.abs().max(1e-6);
+                (
+                    text.insertion_point,
+                    width,
+                    text.height,
+                    text.rotation,
+                )
+            }
+            document::EntityType::MText(text) => {
+                let width = if text.rectangle_width > 0.0 {
+                    text.rectangle_width
+                } else if text.extents_width > 0.0 {
+                    text.extents_width
+                } else {
+                    text.value.chars().count() as f64 * text.height * 0.6
+                };
+                let rows = text.value.split('\n').count().max(1) as f64;
+                let height = text
+                    .rectangle_height
+                    .filter(|height| *height > 0.0)
+                    .or((text.extents_height > 0.0).then_some(text.extents_height))
+                    .unwrap_or(rows * text.height * 1.6);
+                (text.insertion_point, width, height, text.rotation)
+            }
+            _ => return None,
+        };
+        let (sin, cos) = rotation.sin_cos();
+        for (x, y) in [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)] {
+            let wx = (origin.x + x * cos - y * sin) as f32;
+            let wy = (origin.y + x * sin + y * cos) as f32;
+            let wz = origin.z as f32;
+            min[0] = min[0].min(wx);
+            min[1] = min[1].min(wy);
+            min[2] = min[2].min(wz);
+            max[0] = max[0].max(wx);
+            max[1] = max[1].max(wy);
+            max[2] = max[2].max(wz);
+        }
+        Some((min, max))
+    }
+
+    /// The masks that belong to `text`, tracked through the TEXTMASK xdata
+    /// record so they can be replaced or removed later.
+    fn textmask_masks_for(&self, i: usize, text: document::Handle) -> Vec<document::Handle> {
+        use document::xdata::XDataValue;
+        self.tabs[i]
+            .scene
+            .document
+            .entities()
+            .filter(|entity| matches!(entity, document::EntityType::Wipeout(_)))
+            .filter(|entity| {
+                entity
+                    .common()
+                    .extended_data
+                    .get_record(TEXTMASK_APP)
+                    .is_some_and(|record| {
+                        matches!(
+                            record.values.first(),
+                            Some(XDataValue::Handle(owner)) if *owner == text
+                        )
+                    })
+            })
+            .map(|entity| entity.common().handle)
+            .collect()
+    }
+
+    /// (Re)create a mask for each text object with the current offset. Any
+    /// previous mask for the same text is replaced so the offset can change
+    /// without stacking wipeouts. Returns how many texts were masked.
+    fn apply_textmasks(&mut self, i: usize, handles: &[document::Handle]) -> usize {
+        use document::xdata::{ExtendedDataRecord, XDataValue};
+        let offset = self.textmask_offset(i);
+        let mut masked = 0usize;
+        for handle in handles {
+            let previous = self.textmask_masks_for(i, *handle);
+            if !previous.is_empty() {
+                self.tabs[i].scene.erase_entities(&previous);
+            }
+            let Some((min, max)) = self.textmask_bounds(i, *handle) else {
+                continue;
+            };
+            let height = (max[1] - min[1]) as f64;
+            let pad = offset.unwrap_or((height * 0.15).max(0.0));
+            let c1 = document::types::Vector3::new(
+                min[0] as f64 - pad,
+                min[1] as f64 - pad,
+                min[2] as f64,
+            );
+            let c2 = document::types::Vector3::new(
+                max[0] as f64 + pad,
+                max[1] as f64 + pad,
+                min[2] as f64,
+            );
+            let mask = self
+                .tabs[i]
+                .scene
+                .add_entity_clone(document::EntityType::Wipeout(
+                    document::entities::Wipeout::from_corners(c1, c2),
+                ));
+            if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(mask) {
+                let mut record = ExtendedDataRecord::new(TEXTMASK_APP);
+                record.add_value(XDataValue::Handle(*handle));
+                entity.common_mut().extended_data.upsert_record(record);
+            }
+            if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(*handle) {
+                let mut record = ExtendedDataRecord::new(TEXTMASK_APP);
+                record.add_value(XDataValue::Real(pad));
+                entity.common_mut().extended_data.upsert_record(record);
+            }
+            masked += 1;
+        }
+        masked
+    }
+
+    /// Remove the masks for the given texts (or for every masked text when no
+    /// scope is given) and drop the association record. Returns the number of
+    /// masks removed.
+    fn remove_textmasks(
+        &mut self,
+        i: usize,
+        scope: Option<Vec<document::Handle>>,
+    ) -> usize {
+        let texts: Vec<document::Handle> = scope.unwrap_or_else(|| {
+            self.tabs[i]
+                .scene
+                .document
+                .entities()
+                .filter(|entity| {
+                    !matches!(entity, document::EntityType::Wipeout(_))
+                        && entity
+                            .common()
+                            .extended_data
+                            .get_record(TEXTMASK_APP)
+                            .is_some()
+                })
+                .map(|entity| entity.common().handle)
+                .collect()
+        });
+        let masks: Vec<document::Handle> = texts
+            .iter()
+            .flat_map(|text| self.textmask_masks_for(i, *text))
+            .collect();
+        if !masks.is_empty() {
+            self.push_undo_snapshot(i, "TEXTMASK OFF");
+            self.tabs[i].scene.erase_entities(&masks);
+        }
+        for text in &texts {
+            if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(*text) {
+                entity
+                    .common_mut()
+                    .extended_data
+                    .remove_record(TEXTMASK_APP);
+            }
+        }
+        if !masks.is_empty() {
+            self.tabs[i].dirty = true;
+        }
+        masks.len()
     }
 }

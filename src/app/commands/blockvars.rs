@@ -27,7 +27,7 @@ pub(super) fn setvar_listing() -> String {
 }
 
 /// EXPLMODE of the drawing (default 1).
-pub(crate) fn explmode(document: &codec::CadDocument) -> i16 {
+pub(crate) fn explmode(document: &document::Document) -> i16 {
     crate::io::drawing_variable(document, "EXPLMODE")
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(1)
@@ -59,7 +59,7 @@ impl OpenCADStudio {
             }
             "INSNAME" | "BLOCKNAVIGATE" => {
                 let current = if name == "INSNAME" {
-                    self.insname.clone()
+                    self.tabs[i].insname.clone()
                 } else {
                     self.block_navigate.clone()
                 };
@@ -71,16 +71,14 @@ impl OpenCADStudio {
                             v.trim_matches('"').to_string()
                         };
                         if name == "INSNAME" {
-                            self.insname = v;
+                            self.tabs[i].insname = v;
                         } else {
                             self.block_navigate = if v.is_empty() { ".".to_string() } else { v };
                             self.persist_settings_if_changed();
                         }
                     }
                     None => {
-                        self.command_line.push_output(&format!(
-                            "Enter new value for {name}, or . for none <\"{current}\">:"
-                        ));
+                        self.command_line.push_output(&crate::ui::command_line::value_prompt_or_none(&name, &current));
                         self.pending_setvar = Some(name);
                     }
                 }
@@ -95,18 +93,18 @@ impl OpenCADStudio {
                 };
                 let ask = |app: &mut Self, name: String| {
                     app.command_line
-                        .push_output(&format!("Enter new value for {name} <{current}>:"));
+                        .push_output(&crate::ui::command_line::value_prompt(&name, &current));
                     app.pending_setvar = Some(name);
                 };
                 match value {
                     None => ask(self, name),
                     Some(v) => match v.parse::<i32>() {
                         Err(_) => {
-                            self.command_line.push_error("Requires an integer value.");
+                            self.command_line.push_rejection("Requires an integer value.");
                             ask(self, name);
                         }
                         Ok(n) if !(0..=max).contains(&n) => {
-                            self.command_line.push_error(&if max == 1 {
+                            self.command_line.push_rejection(&if max == 1 {
                                 "Requires 0 or 1 only.".to_string()
                             } else {
                                 format!("Requires an integer between 0 and {max}.")

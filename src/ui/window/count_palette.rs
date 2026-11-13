@@ -1,14 +1,14 @@
 //! The Count palette (COUNTLIST) and count mode (COUNT): the drawing's
 //! blocks with how many references of each are counted, and — once a block
 //! is chosen — its counted references coloured in the drawing with a
-//! floating toolbar above it. Counting itself is `codec::count`.
+//! floating toolbar above it. Counting itself is `document::count`.
 
 use crate::app::Message;
 use crate::ui::dock::PanelId;
 use crate::ui::style::common::muted_style;
 use crate::ui::style::form::{button_style, field_style};
-use codec::count::{BlockInstance, CountKey};
-use codec::{CadDocument, Handle};
+use document::count::{BlockInstance, CountKey};
+use document::{Document, Handle};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, row, scrollable, text, text_input, tooltip,
     Space,
@@ -69,8 +69,8 @@ pub struct CountResult {
 }
 
 impl CountMode {
-    pub fn instances(&self, doc: &CadDocument) -> Vec<BlockInstance> {
-        codec::count::block_instances(doc, self.area.as_deref())
+    pub fn instances(&self, doc: &Document) -> Vec<BlockInstance> {
+        document::count::block_instances(doc, self.area.as_deref())
     }
 
     /// The key the match options build from the reference instance.
@@ -90,7 +90,7 @@ impl CountMode {
     }
 
     /// The cached result, or one worked out from the drawing when there is none.
-    pub fn result(&self, doc: &CadDocument) -> std::borrow::Cow<'_, CountResult> {
+    pub fn result(&self, doc: &Document) -> std::borrow::Cow<'_, CountResult> {
         match &self.cache {
             Some((result, _)) => std::borrow::Cow::Borrowed(result),
             None => std::borrow::Cow::Owned(self.compute(doc).0),
@@ -98,7 +98,7 @@ impl CountMode {
     }
 
     /// What the count shows: the counted references, or the copies of a group.
-    pub fn count(&self, doc: &CadDocument) -> usize {
+    pub fn count(&self, doc: &Document) -> usize {
         match &self.cache {
             Some((_, n)) => *n,
             None => self.compute(doc).1,
@@ -106,9 +106,9 @@ impl CountMode {
     }
 
     /// The result and the count, worked out from the drawing.
-    pub fn compute(&self, doc: &CadDocument) -> (CountResult, usize) {
+    pub fn compute(&self, doc: &Document) -> (CountResult, usize) {
         if let Some(CountTarget::Group(handles)) = &self.target {
-            let groups = codec::count::group_matches(doc, handles, self.area.as_deref());
+            let groups = document::count::group_matches(doc, handles, self.area.as_deref());
             let result = CountResult {
                 counted: groups.concat(),
                 errors: Vec::new(),
@@ -121,7 +121,7 @@ impl CountMode {
         (result, n)
     }
 
-    fn block_result(&self, doc: &CadDocument) -> CountResult {
+    fn block_result(&self, doc: &Document) -> CountResult {
         match &self.target {
             None | Some(CountTarget::Group(_)) => CountResult::default(),
             Some(CountTarget::Block { name, .. }) => {
@@ -283,7 +283,7 @@ pub struct Row {
 /// (case-insensitively), sorted by the chosen column.
 pub fn rows(instances: &[BlockInstance], palette: &CountPalette) -> Vec<Row> {
     let query = palette.search.trim().to_lowercase();
-    let mut rows: Vec<Row> = codec::count::block_counts(instances)
+    let mut rows: Vec<Row> = document::count::block_counts(instances)
         .into_iter()
         .filter(|c| query.is_empty() || c.name.to_lowercase().contains(&query))
         .map(|c| Row {
@@ -491,7 +491,7 @@ fn list_view<'a>(palette: &'a CountPalette, instances: &[BlockInstance]) -> Elem
             Some(expansion.is_some()),
         ));
         if let Some([l, s, m]) = expansion {
-            for (key, n) in codec::count::expanded_counts(instances, &r.name, l, s, m) {
+            for (key, n) in document::count::expanded_counts(instances, &r.name, l, s, m) {
                 let label = key.label();
                 list = list.push(list_row(
                     palette,
@@ -571,7 +571,7 @@ fn card(theme: &Theme) -> container::Style {
 fn mode_view<'a>(
     palette: &'a CountPalette,
     mode: &'a CountMode,
-    doc: &CadDocument,
+    doc: &Document,
 ) -> Element<'a, Message> {
     let back = button(
         row![
@@ -656,7 +656,7 @@ fn mode_view<'a>(
 pub fn view<'a>(
     palette: &'a CountPalette,
     mode: Option<&'a CountMode>,
-    doc: &'a CadDocument,
+    doc: &'a Document,
     doc_id: u64,
     epoch: u64,
     width: f32,
@@ -674,7 +674,7 @@ pub fn view<'a>(
                 Some((d, e, a, list)) if (*d, *e) == key && *a == area => list.clone(),
                 _ => {
                     let list =
-                        std::rc::Rc::new(codec::count::block_instances(doc, area.as_deref()));
+                        std::rc::Rc::new(document::count::block_instances(doc, area.as_deref()));
                     *cache = Some((key.0, key.1, area, list.clone()));
                     list
                 }
@@ -701,7 +701,7 @@ fn bar_button<'a>(
 
 /// The floating toolbar over the drawing in count mode: the count, the
 /// status, previous / next reference, area, select, field and close.
-pub fn toolbar<'a>(mode: &CountMode, doc: &CadDocument) -> Element<'a, Message> {
+pub fn toolbar<'a>(mode: &CountMode, doc: &Document) -> Element<'a, Message> {
     let has_target = mode.target.is_some();
     let result = mode.result(doc);
     let count = if has_target {
@@ -796,7 +796,7 @@ pub fn border<'a>() -> Element<'a, Message> {
 
 /// A colour index as the display colour (`COUNTCOLOR` / `COUNTERRORCOLOR`).
 pub fn aci_rgba(index: i16) -> [f32; 4] {
-    crate::scene::convert::tess_util::aci_to_rgba(&codec::types::Color::from_index(index))
+    crate::scene::convert::tess_util::aci_to_rgba(&document::types::Color::from_index(index))
 }
 
 /// The Invalid Area dialog, shown when the count area's boundary is gone.

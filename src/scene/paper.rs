@@ -93,7 +93,7 @@ impl Scene {
         if !self.any_viewport_grid_on() {
             return Vec::new();
         }
-        self.active_viewports(vw, vh, codec::entities::ViewportRenderMode::Wireframe2D)
+        self.active_viewports(vw, vh, document::entities::ViewportRenderMode::Wireframe2D)
             .into_iter()
             .filter(|inst| inst.grid_on)
             .map(|inst| (inst.screen_rect, inst.camera, inst.handle))
@@ -113,7 +113,7 @@ impl Scene {
         &self,
         canvas_w: f32,
         canvas_h: f32,
-        model_mode: codec::entities::ViewportRenderMode,
+        model_mode: document::entities::ViewportRenderMode,
     ) -> Vec<ViewportInstance> {
         if self.current_layout == "Model" {
             let tiles = self.model_tiles.borrow();
@@ -183,7 +183,7 @@ impl Scene {
                 height: canvas_h,
             },
             camera: sheet_cam,
-            render_mode: codec::entities::ViewportRenderMode::Wireframe2D,
+            render_mode: document::entities::ViewportRenderMode::Wireframe2D,
             active: false,
             grid_on: sheet_grid_on,
             paper_sheet: true,
@@ -418,12 +418,19 @@ impl Scene {
     /// there is unreliable.
     fn paper_canvas_hatches(&self, tint_selected: bool) -> Arc<Vec<HatchModel>> {
         let layout_block = self.current_layout_block_handle();
+        // LAYWALK: when the sheet's own space is walked, layers outside the
+        // visible set hide here as if frozen — captured once, like the walk
+        // never changes within a build.
+        let layer_walk = self.render_space_layer_walk(layout_block, None);
         let layer_hidden = |layer: &str| {
             self.document
                 .layers
                 .get(layer)
-                .map(|l| l.flags.off || l.flags.frozen)
-                .unwrap_or(false)
+                .is_some_and(|l| {
+                    l.flags.off
+                        || l.flags.frozen
+                        || layer_walk.is_some_and(|walk| !walk.contains(&l.handle))
+                })
         };
         let mut models: Vec<HatchModel> = Vec::new();
         let annotation_scale_handle = self.paper_annotation_scale_handle();
@@ -543,12 +550,18 @@ impl Scene {
         all_visible: bool,
         include_solids: bool,
     ) -> Vec<HatchModel> {
+        // The walked space hides its outside-set layers in sheet fills too;
+        // foreign blocks / plot passes resolve to `None` and stay complete.
+        let layer_walk = self.render_space_layer_walk(block, None);
         let layer_hidden = |layer: &str| {
             self.document
                 .layers
                 .get(layer)
-                .map(|l| l.flags.off || l.flags.frozen)
-                .unwrap_or(false)
+                .is_some_and(|l| {
+                    l.flags.off
+                        || l.flags.frozen
+                        || layer_walk.is_some_and(|walk| !walk.contains(&l.handle))
+                })
         };
         let layer_plottable = |layer: &str| {
             self.document
@@ -665,6 +678,7 @@ impl Scene {
             self.paper_bg_color,
             highlight_selection,
             true,
+            None,
         )
     }
 
@@ -683,6 +697,7 @@ impl Scene {
             self.paper_bg_color,
             true,
             false,
+            None,
         ))
     }
 
@@ -775,7 +790,7 @@ impl Scene {
         if let Some(cam) = self.camera_from_view_mode(
             vp.view_direction,
             vp.view_target,
-            codec::types::Vector2 {
+            document::types::Vector2 {
                 x: vp.view_center.x,
                 y: vp.view_center.y,
             },
@@ -808,7 +823,7 @@ impl Scene {
 
         // Auto-fit: aim at the content cluster centre, drop the stale view_center.
         let fit_h = cluster_half * 2.0 * 1.05;
-        let tgt = codec::types::Vector3 {
+        let tgt = document::types::Vector3 {
             x: cx,
             y: cy,
             z: vp.view_target.z,
@@ -816,7 +831,7 @@ impl Scene {
         self.camera_from_view_mode(
             vp.view_direction,
             tgt,
-            codec::types::Vector2::ZERO,
+            document::types::Vector2::ZERO,
             fit_h,
             vp.twist_angle,
             vp.status.perspective,
@@ -840,17 +855,79 @@ impl Scene {
         // annotation geometry to view_height rebuilt the entire model on every
         // wheel tick whenever the drawing contained one annotative object.
         // Explicit viewport annotation-scale changes still rebuild the resident
-        // set; PSLTSCALE is a viewport GPU uniform.
+        // set; PSLTSCALE is a viewport GPU uniform, except for complex linetypes,
+        // which rebuild once when the zoom settles.
         let frozen: HSet<Handle> = self.viewport_hidden_handles(vp_handle);
 
         let scale_handle = self.viewport_scale_handle(vp_handle);
-        self.resident_wires_for(
+        self.viewport_complex_lt
+            .set(self.viewport_complex_lt_factor(vp_handle, false));
+        let wires = self.resident_wires_for(
             self.model_space_block_handle(),
             Some(self.viewport_annotation_multiplier(vp_handle)),
             scale_handle,
             Some(&frozen),
             Some(vp_handle),
-        )
+        );
+        self.viewport_complex_lt.set(None);
+        wires
+    }
+
+    /// PSLTSCALE's factor on linetypes in a viewport: 1 / viewport scale, which
+    /// keeps a pattern at its length on the sheet. `None` when it doesn't apply.
+    pub(super) fn viewport_psltscale_factor(&self, vp_handle: Handle) -> Option<f32> {
+        if !self.document.header.paper_space_linetype_scaling {
+            return None;
+        }
+        let Some(EntityType::Viewport(vp)) = self.document.get_entity(vp_handle) else {
+            return None;
+        };
+        let scale = vp_effective_scale(vp.custom_scale, vp.view_height, vp.height);
+        (scale.is_finite() && scale > 1e-9).then(|| (1.0 / scale) as f32)
+    }
+
+    /// The factor a viewport's complex linetypes are baked at. Their dashes and
+    /// glyphs are geometry, so a new factor means a new resident set: it follows
+    /// the viewport's scale only once the view has stopped moving, unless
+    /// `settle` asks for the current one. A drawing with no complex linetype gets
+    /// `None`, which leaves its resident set alone.
+    pub(super) fn viewport_complex_lt_factor(
+        &self,
+        vp_handle: Handle,
+        settle: bool,
+    ) -> Option<f32> {
+        if !crate::io::linetypes::defines_complex_lt(&self.document) {
+            return None;
+        }
+        let current = self.viewport_psltscale_factor(vp_handle)?;
+        let mut baked = self.viewport_complex_lt_baked.borrow_mut();
+        match baked.get(&vp_handle) {
+            Some(&factor) if factor == current || (!settle && self.navigating_lod()) => {
+                Some(factor)
+            }
+            _ => {
+                baked.insert(vp_handle, current);
+                // Hit-testing reads the projected copy of the old set.
+                self.paper_projected_cache.borrow_mut().remove(&vp_handle);
+                Some(current)
+            }
+        }
+    }
+
+    /// The factor on complex linetypes for a tessellation pass: the viewport's
+    /// PSLTSCALE factor, else 1 for any other viewport content.
+    pub(super) fn viewport_lt_for(&self, anno_scale_override: Option<f32>) -> Option<f32> {
+        self.viewport_complex_lt
+            .get()
+            .or(anno_scale_override.map(|_| 1.0))
+    }
+
+    /// Part of the resident memo's guard: what the memo holds is baked at this
+    /// factor.
+    pub(super) fn viewport_complex_lt_guard(&self) -> u64 {
+        self.viewport_complex_lt
+            .get()
+            .map_or(0, |factor| (factor.to_bits() as u64 + 1).rotate_left(31))
     }
 
     /// Resident model wires for a paper content viewport. Just the unified
